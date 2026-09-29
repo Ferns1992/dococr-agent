@@ -124,5 +124,28 @@
   </div>
 </div>
 <script src="/session.js?v=1"></script>
+
+<!-- Source preview -->
+<div id="preview-modal" class="pv-modal" aria-hidden="true" role="dialog" aria-label="Source preview">
+  <div class="pv-backdrop" id="pv-backdrop"></div>
+  <div class="pv-frame" role="document">
+    <header class="pv-head">
+      <div class="pv-titles">
+        <strong id="pv-title">Preview</strong>
+        <span id="pv-sub"></span>
+      </div>
+      <div class="pv-controls">
+        <button class="btn ghost" data-zoom="out" title="Zoom out">&#8722;</button>
+        <span id="pv-zoom-level" class="pv-zoom-level">100%</span>
+        <button class="btn ghost" data-zoom="in" title="Zoom in">&#43;</button>
+        <button class="btn ghost" data-zoom="reset" title="Reset zoom">1:1</button>
+        <a id="pv-download" class="btn ghost" href="#" download style="display:none">Download</a>
+        <button class="btn ghost" id="pv-close" title="Close">&times;</button>
+      </div>
+    </header>
+    <div id="pv-canvas" class="pv-canvas"><div id="preview-body" class="pv-body"></div></div>
+  </div>
+</div>
+
 </body>
 </html>

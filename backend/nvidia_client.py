@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import logging
 import mimetypes
 from pathlib import Path
@@ -71,12 +72,12 @@ async def _post_with_retry(
             return response
         if attempt == attempts:
             break
-        wait = delay * (1.5 ** (attempt - 1))
+        wait = delay * (1.6 ** (attempt - 1))
         log.warning(
             "NVIDIA %s (attempt %d/%d), retrying in %.1fs",
             response.status_code, attempt, attempts, wait,
         )
-        await asyncio.sleep(wait)
+        await asyncio.sleep(min(wait, 30.0))
     return response
 
 
@@ -187,14 +188,15 @@ async def ocr_image(client: httpx.AsyncClient, image_path: Path) -> str:
             client, f"{config.NVIDIA_BASE_URL}/chat/completions",
             json_body=body,
             timeout=180.0,
+            attempts=config.OCR_ATTEMPTS,
         )
     if response.status_code != 200:
         raise NvidiaError(_extract_error(response))
     choices = response.json().get("choices") or []
     if not choices:
         return ""
-    text = (choices[0].get("message") or {}).get("content") or ""
-    text = text.strip()
+    message = choices[0].get("message") or {}
+    text = (message.get("content") or "").strip()
     if text in ("NO_TEXT", "NO TEXT") or len(text) < 3:
         return ""
     return text

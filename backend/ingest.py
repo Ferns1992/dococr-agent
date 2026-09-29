@@ -43,10 +43,12 @@ async def _run_ocr(
     client: httpx.AsyncClient, targets: List[dict], progress=None
 ) -> List[str]:
     if not config.OCR_ENABLED or not targets:
-        return []
+        return {"chunks": [], "errors": [], "blanks": [], "attempted": 0}
     selected = targets[: config.OCR_MAX_PER_DOC]
     total = max(1, len(selected))
     blocks: List[str] = []
+    ocr_errors: List[str] = []
+    ocr_blanks: List[str] = []
     for index, target in enumerate(selected, start=1):
         if progress:
             progress(
@@ -60,13 +62,25 @@ async def _run_ocr(
         try:
             text = await nvidia_client.ocr_image(client, path)
         except (nvidia_client.NvidiaError, httpx.HTTPError) as exc:
-            logging.getLogger("ingest").warning("OCR failed for %s: %s", path.name, exc)
+            # Never swallow this: a document that indexes with no text is the
+            # single most confusing failure this app can have.
+            ocr_errors.append(f"{path.name}: {exc}")
+            logging.getLogger("ingest").warning(
+                "OCR failed for %s: %s: %s", path.name, type(exc).__name__, exc
+            )
             continue
         if not text or not text.strip():
+            # Legitimately possible: a photo, a diagram with no lettering.
+            ocr_blanks.append(path.name)
             continue
         where = f"page {target['page']}" if target.get("page") else "image"
         blocks.append(f"[OCR — {where}]\n{text}")
-    return extract.chunk_text("\n\n".join(blocks))
+    return {
+        "chunks": extract.chunk_text("\n\n".join(blocks)),
+        "errors": ocr_errors,
+        "blanks": ocr_blanks,
+        "attempted": len(selected),
+    }
 
 
 async def ingest_bytes(
@@ -95,13 +109,33 @@ async def ingest_bytes(
     images: List[dict] = result["images"]
     ocr_chunks: List[str] = []
 
+    ocr_errors: List[str] = []
     if result.get("ocr_targets"):
-        ocr_chunks = await _run_ocr(client, result["ocr_targets"], progress=progress)
+        ocr = await _run_ocr(client, result["ocr_targets"], progress=progress)
+        ocr_chunks = ocr["chunks"]
+        ocr_errors = ocr["errors"]
 
     if not chunks and not images and not ocr_chunks:
         raise extract.ExtractError(
             f"Nothing indexable found in {source_name}."
         )
+
+    if images and not ocr_chunks:
+        # The image itself is stored and visually searchable, but its text was
+        # never read. Reporting this prevents "it uploaded but there is nothing
+        # in it" from looking like the upload failed.
+        if ocr_errors:
+            warning = (
+                "Indexed for image search, but no text could be read from it "
+                f"({ocr_errors[0].split(':')[0]}: the OCR service was rate-limited). "
+                "Ask in Research mode, or re-upload to retry."
+            )
+        else:
+            warning = (
+                "Indexed for image search. No readable text was found in it, "
+                "so text search will not match this file."
+            )
+        logging.getLogger("ingest").warning("%s: %s", source_name, warning)
 
     stored_chunks = 0
     stored_images = 0

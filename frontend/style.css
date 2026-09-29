@@ -363,3 +363,66 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   .sourcemodes { flex-wrap: wrap; }
   .srcmode { padding: 5px 9px; font-size: 12px; }
 }
+
+
+/* ---------------- source preview lightbox ---------------- */
+.hit-open {
+  display: inline-flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
+}
+.hit-open:hover .loc { color: var(--accent); }
+.zoom-hint { font-size: 11px; color: var(--accent); opacity: .7; }
+
+.pv-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 999;
+}
+.pv-modal.open { display: block; }
+.pv-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
+.pv-frame {
+  position: absolute;
+  inset: 3vh 3vw;
+  background: var(--bg, #fff);
+  color: var(--ink, #111);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0,0,0,.5);
+}
+.pv-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(0,0,0,.12);
+}
+.pv-titles { display: flex; flex-direction: column; }
+.pv-titles strong { font-size: 14px; }
+.pv-sub { font-size: 11px; opacity: .65; }
+.pv-controls { display: flex; align-items: center; gap: 4px; }
+.pv-zoom-level { font-size: 12px; min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
+.pv-canvas { flex: 1; overflow: auto; position: relative; background: rgba(0,0,0,.04); }
+.pv-body.image { display: flex; }
+.pv-scroll { margin: auto; padding: 20px; }
+.pv-scroll img { display: block; }
+.pv-body.text { width: 100%; height: 100%; }
+.pv-body.text iframe { width: 100%; height: 100%; border: 0; }
+#pv-text { margin: 0; padding: 18px; white-space: pre-wrap; max-width: 100%; line-height: 1.5; }
+.pv-loading, .pv-error, .pv-note { padding: 28px; text-align: center; color: #555; }
+.pv-error code { color: #b00020; }
+@media (max-width: 720px) {
+  .pv-frame { inset: 0; border-radius: 0; }
+  .pv-head { flex-wrap: wrap; }
+}

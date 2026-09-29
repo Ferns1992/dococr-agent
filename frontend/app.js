@@ -73,7 +73,11 @@ function renderSources(hits) {
       ? `<img src="/media/${encodeURIComponent(hit.media_path)}" alt="${sourceLabel(hit)}" loading="lazy">`
       : "";
     return `<div class="hit">
-      <div class="loc">${escapeHtml(sourceLabel(hit))} · ${hit.score.toFixed(3)}</div>
+      <button class="hit-open" data-preview="${escapeHtml(hit.source_id || "")}"
+              title="Open a preview of this file">
+        <span class="loc">${escapeHtml(sourceLabel(hit))} · ${hit.score.toFixed(3)}</span>
+        <span class="zoom-hint">preview &#8599;</span>
+      </button>
       ${preview ? `<div class="txt">${preview}…</div>` : ""}
       ${img}
     </div>`;
@@ -574,3 +578,154 @@ loadSources();
     /* history is a convenience; a fresh chat still works */
   }
 })();
+
+
+// ---------------------------------------------------------------- source preview
+const pv = {
+  scale: 1,
+  min: 0.25,
+  max: 6,
+  type: null,
+  sourceId: null,
+
+  el() { return document.getElementById("preview-modal"); },
+
+  async open(sourceId) {
+    if (!sourceId) return;
+    this.sourceId = sourceId;
+    this.scale = 1;
+    const modal = this.el();
+    if (!modal) return;
+    modal.classList.add("open");
+    document.body.classList.add("modal-open");
+    const body = document.getElementById("preview-body");
+    body.innerHTML = '<p class="pv-loading">Loading preview…</p>';
+    document.getElementById("pv-title").textContent = "Loading…";
+    try {
+      const res = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/preview`);
+      if (!res.ok) throw new Error(`Preview failed (${res.status})`);
+      const d = await res.json();
+      this.type = d.preview_type;
+      document.getElementById("pv-title").textContent =
+        d.source_name || d.filename || "Preview";
+      document.getElementById("pv-sub").textContent =
+        [d.kind, d.size_bytes ? `${(d.size_bytes / 1024).toFixed(0)} KB` : null]
+          .filter(Boolean).join(" · ");
+      const dl = document.getElementById("pv-download");
+      dl.href = d.download_url || "";
+      dl.style.display = d.download_url ? "" : "none";
+      this.render(d);
+    } catch (err) {
+      body.innerHTML =
+        `<p class="pv-error">Could not open this preview.<br><code>${escapeHtml(String(err.message || err))}</code></p>`;
+    }
+  },
+
+  render(d) {
+    const body = document.getElementById("preview-body");
+    const wrap = document.getElementById("pv-canvas");
+    if (d.preview_type === "image" && d.url) {
+      body.className = "pv-body image";
+      body.innerHTML =
+        `<div class="pv-scroll"><img id="pv-img" src="${escapeHtml(d.url)}" alt="${escapeHtml(d.source_name || "")}"></div>`;
+      const img = document.getElementById("pv-img");
+      img.onload = () => { this.fit(img); };
+      if (img.complete) this.fit(img);
+    } else if (d.preview_type === "pdf" && d.page_image) {
+      body.className = "pv-body image";
+      body.innerHTML =
+        `<div class="pv-scroll"><img id="pv-img" src="/media/${encodeURIComponent(d.page_image)}" alt="${escapeHtml(d.source_name || "")}"></div>`;
+      const img = document.getElementById("pv-img");
+      img.onload = () => { this.fit(img); };
+      if (img.complete) this.fit(img);
+    } else if (d.preview_type === "pdf" && !d.page_image) {
+      body.className = "pv-body text";
+      body.innerHTML =
+        `<iframe src="${escapeHtml(d.url || d.download_url)}#toolbar=1" title="PDF preview"></iframe>`;
+    } else if (d.preview_type === "text") {
+      body.className = "pv-body text";
+      body.innerHTML = `<pre id="pv-text">${escapeHtml(d.text || "")}</pre>`;
+      document.getElementById("pv-text").style.fontSize = `${this.scale}em`;
+    } else if (d.preview_type === "download") {
+      body.className = "pv-body text";
+      body.innerHTML =
+        `<p class="pv-note">This file type cannot be shown inline.
+         Use <strong>Download</strong> to open it.</p>`;
+    } else {
+      body.className = "pv-body text";
+      body.innerHTML =
+        `<p class="pv-note">${escapeHtml(d.reason || "No preview available.")}</p>`;
+    }
+    this.zoomLabel();
+    wrap.scrollTop = 0;
+  },
+
+  // Zoom to fit the viewport width on open, so a wide diagram is readable
+  // without manual panning, then allow free zoom from there.
+  fit(img) {
+    const scroll = img.closest(".pv-scroll");
+    if (!scroll) return;
+    const avail = scroll.clientWidth - 24;
+    if (avail > 0 && img.naturalWidth) {
+      this.scale = Math.max(this.min, Math.min(this.max, avail / img.naturalWidth));
+      img.style.width = `${this.scale * 100}%`;
+      img.style.maxWidth = "none";
+    }
+    this.zoomLabel();
+  },
+
+  setZoom(next) {
+    this.scale = Math.max(this.min, Math.min(this.max, next));
+    const img = document.getElementById("pv-img");
+    if (img) {
+      img.style.width = `${this.scale * 100}%`;
+      img.style.maxWidth = "none";
+    }
+    const txt = document.getElementById("pv-text");
+    if (txt) txt.style.fontSize = `${this.scale}em`;
+    this.zoomLabel();
+  },
+
+  zoomLabel() {
+    const l = document.getElementById("pv-zoom-level");
+    if (l) l.textContent = `${Math.round(this.scale * 100)}%`;
+  },
+
+  close() {
+    const modal = this.el();
+    if (modal) modal.classList.remove("open");
+    document.body.classList.remove("modal-open");
+    const body = document.getElementById("preview-body");
+    if (body) body.innerHTML = "";
+  },
+};
+
+
+// click a citation (or a library row) to preview it
+document.addEventListener("click", (e) => {
+  const open = e.target.closest("[data-preview]");
+  if (open) {
+    e.preventDefault();
+    pv.open(open.getAttribute("data-preview"));
+    return;
+  }
+  if (e.target.closest("#pv-close") || e.target.closest("#pv-backdrop")) {
+    pv.close();
+    return;
+  }
+  if (e.target.closest("[data-zoom]")) {
+    const step = e.target.closest("[data-zoom]").getAttribute("data-zoom");
+    if (step === "in") pv.setZoom(pv.scale * 1.25);
+    else if (step === "out") pv.setZoom(pv.scale / 1.25);
+    else pv.setZoom(1);
+    return;
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!document.getElementById("preview-modal")?.classList.contains("open")) return;
+  if (e.key === "Escape") pv.close();
+  else if (e.key === "+" || e.key === "=") pv.setZoom(pv.scale * 1.25);
+  else if (e.key === "-") pv.setZoom(pv.scale / 1.25);
+  else if (e.key === "0") pv.setZoom(1);
+});

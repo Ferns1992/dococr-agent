@@ -124,10 +124,18 @@ def create_source(
     data: Optional[bytes],
     mime: Optional[str] = None,
     origin: str = "upload",
+    source_id: Optional[str] = None,
 ) -> dict:
-    """Register an ingested document, persisting the original bytes to disk."""
+    """Register an ingested document, persisting the original bytes to disk.
+
+    source_id must be supplied when the caller has already chosen one (URL
+    ingest does, so the Qdrant payloads and this row agree). Left unset it is
+    minted here, which is fine for byte uploads because they have not yet been
+    indexed.
+    """
     init_db()
-    source_id = secrets.token_hex(16)
+    if not source_id:
+        source_id = secrets.token_hex(16)
     stored_path = None
     size = 0
     if data is not None:

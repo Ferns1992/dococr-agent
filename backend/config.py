@@ -12,7 +12,7 @@ NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nvidia/nemotron-3-embed-1b")
 CLIP_MODEL = os.getenv("CLIP_MODEL", "nvidia/nvclip")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
-OCR_MODEL = os.getenv("OCR_MODEL", "nvidia/nemotron-nano-12b-v2-vl")
+OCR_MODEL = os.getenv("OCR_MODEL", "meta/llama-3.2-11b-vision-instruct")
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() == "true"
 OCR_MAX_PER_DOC = int(os.getenv("OCR_MAX_PER_DOC", "30"))
 
@@ -50,3 +50,6 @@ def text_collection() -> str:
 
 def image_collection() -> str:
     return f"{COLLECTION_PREFIX}_images"
+
+# Free-tier vision calls hit a 16/16 worker cap; be patient.
+OCR_ATTEMPTS = int(os.getenv("OCR_ATTEMPTS", "10"))

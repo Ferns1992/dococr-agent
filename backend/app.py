@@ -3,6 +3,7 @@ import json
 import os
 import time
 import uuid
+from urllib.parse import quote
 from typing import List, Optional
 
 import httpx
@@ -11,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from qdrant_client import models
 
 import auth
 import config
@@ -434,10 +437,19 @@ async def ingest_url_endpoint(payload: UrlRequest, request: Request) -> dict:
     async def factory(report):
         async with httpx.AsyncClient() as client:
             result = await ingest.ingest_url(client, url, progress=report, user_id=user["id"])
+        # The id must be the one ingest_url used for the Qdrant payloads.
+        # Letting create_source mint its own random id left the library row
+        # pointing at nothing: no chunk count, no download, orphan vectors.
         db.create_source(
             user_id=user["id"], name=result["source_name"], kind=result["kind"],
             filename=result["source_name"], data=None,
-            mime=None, origin="url",
+            mime=None, origin="url", source_id=result["source_id"],
+        )
+        db.finalize_source(
+            result["source_id"],
+            chunks=result.get("chunks", 0),
+            images=result.get("images", 0),
+            media_kind=result.get("media_kind") or "text",
         )
         return result
 
@@ -493,6 +505,145 @@ def download_source(request: Request, source_id: str) -> FileResponse:
         media_type=record["mime"] or "application/octet-stream",
         filename=record["filename"],
     )
+
+
+@app.get("/api/sources/{source_id}/preview/file")
+def preview_inline(request: Request, source_id: str) -> FileResponse:
+    """Serve the original with Content-Disposition inline, so <iframe> and the
+    browser's PDF viewer can render it (the /file route forces a download)."""
+    user = current_user(request)
+    try:
+        record = db.get_source(source_id)
+    except KeyError:
+        raise HTTPException(404, "Document not found")
+    if user["role"] != auth.ROLE_ADMIN and record["user_id"] != user["id"]:
+        raise HTTPException(403, "You do not have access to that document")
+    if not record["stored_path"] or not os.path.isfile(record["stored_path"]):
+        raise HTTPException(404, "Original file is no longer available")
+    return FileResponse(
+        record["stored_path"],
+        media_type=record["mime"] or "application/octet-stream",
+        headers={"Content-Disposition": "inline"},
+    )
+
+
+@app.get("/api/sources/{source_id}/preview")
+def preview_source(request: Request, source_id: str) -> dict:
+    """Inline-renderable content for the source viewer.
+
+    The /file endpoint forces a download, so an <img> tag renders nothing.
+    This returns something a browser can display directly.
+    """
+    user = current_user(request)
+    try:
+        record = db.get_source(source_id)
+    except KeyError:
+        raise HTTPException(404, "Document not found")
+    if user["role"] != auth.ROLE_ADMIN and record["user_id"] != user["id"]:
+        raise HTTPException(403, "You do not have access to that document")
+
+    name = record["filename"] or record["source_name"] or ""
+    suffix = os.path.splitext(name)[1].lower()
+    base = {
+        "source_id": source_id,
+        "source_name": record["source_name"],
+        "kind": record["kind"],
+        "media_kind": record["media_kind"],
+        "filename": name,
+        "mime": record["mime"],
+        "size_bytes": record["size_bytes"],
+    }
+
+    # A page image always wins for PDFs: it is exactly what the user saw.
+    page_image = _first_page_image(source_id)
+    if suffix == ".pdf":
+        if page_image:
+            return {
+                **base, "preview_type": "pdf",
+                "page_image": page_image,
+                "download_url": f"/api/sources/{source_id}/file",
+                "url": f"/api/sources/{source_id}/preview/file",
+            }
+        # A text-born PDF has no rendered thumbnail; hand it to the browser's
+        # built-in PDF viewer instead.
+        if record["stored_path"] and os.path.isfile(record["stored_path"]):
+            return {
+                **base, "preview_type": "pdf",
+                "url": f"/api/sources/{source_id}/preview/file",
+                "download_url": f"/api/sources/{source_id}/file",
+            }
+        return {**base, "preview_type": "unavailable",
+                "reason": "The original PDF file is no longer available."}
+
+    if suffix in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"):
+        if page_image:
+            return {**base, "preview_type": "image",
+                    "url": f"/media/{quote(os.path.basename(page_image))}",
+                    "download_url": f"/api/sources/{source_id}/file"}
+        # Fall back to the stored original when the page render is gone.
+        if record["stored_path"] and os.path.isfile(record["stored_path"]):
+            return {**base, "preview_type": "image",
+                    "url": f"/api/sources/{source_id}/file",
+                    "download_url": f"/api/sources/{source_id}/file"}
+        return {**base, "preview_type": "unavailable",
+                "reason": "No renderable image for this document."}
+
+    # Text-ish formats: show the extracted text, not the raw bytes.
+    text = _extracted_text(source_id)
+    if text is not None:
+        return {**base, "preview_type": "text", "text": text,
+                "download_url": f"/api/sources/{source_id}/file"}
+
+    if record["stored_path"] and os.path.isfile(record["stored_path"]):
+        return {**base, "preview_type": "download",
+                "download_url": f"/api/sources/{source_id}/file"}
+    return {**base, "preview_type": "unavailable",
+            "reason": "The original file is no longer available."}
+
+
+def _first_page_image(source_id: str) -> Optional[str]:
+    """Lowest-ordinal page image for a source, if any."""
+    try:
+        client = store.get_client()
+        points, _ = client.scroll(
+            collection_name=config.image_collection(),
+            scroll_filter=models.Filter(must=[
+                models.FieldCondition(key="source_id", match=models.MatchValue(value=source_id))
+            ]),
+            limit=1,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception:
+        return None
+    for point in points:
+        path = (point.payload or {}).get("media_path")
+        if path and os.path.isfile(config.MEDIA_DIR / os.path.basename(path)):
+            return os.path.basename(path)
+    return None
+
+
+def _extracted_text(source_id: str, limit: int = 40000) -> Optional[str]:
+    """Reassemble the indexed text for a source so the viewer can show it."""
+    try:
+        client = store.get_client()
+        points, _ = client.scroll(
+            collection_name=config.text_collection(),
+            scroll_filter=models.Filter(must=[
+                models.FieldCondition(key="source_id", match=models.MatchValue(value=source_id))
+            ]),
+            limit=200,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception:
+        return None
+    chunks = sorted(
+        ((p.payload or {}).get("ordinal", 0), (p.payload or {}).get("text") or "")
+        for p in points
+    )
+    text = "\n\n".join(t for _, t in chunks if t.strip())
+    return text[:limit] if text.strip() else None
 
 
 @app.delete("/api/sources/{source_id}")

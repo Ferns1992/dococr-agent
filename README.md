@@ -123,7 +123,7 @@ Everything is environment-driven. The full list lives in [`.env.example`](.env.e
 | `ADMIN_PASSWORD` | — | 🔑 First admin's password. Change it after login |
 | `CHAT_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | 🧠 Answer model |
 | `EMBED_MODEL` | `nvidia/nemotron-3-embed-1b` | 🧬 Text embeddings |
-| `OCR_MODEL` | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | 👁️ Image and scan OCR |
+| `OCR_MODEL` | `meta/llama-3.2-11b-vision-instruct` | 👁️ Image and scan OCR |
 | `OCR_ENABLED` | `true` | Toggle OCR entirely |
 | `TOP_K` | `6` | 🔍 Passages retrieved per question |
 | `CHUNK_CHARS` | `1400` | ✂️ Chunk size for long documents |
