@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin &middot; DocChat</title>
+<link rel="icon" href="/icon.png">
+<link rel="stylesheet" href="/login.css?v=1">
+<style>
+  .panel { width: min(940px, 94vw); }
+  .card { padding: 30px 32px; }
+  .head { display:flex; align-items:center; gap:14px; margin-bottom:22px; }
+  .head img { width:40px; height:40px; border-radius:10px; }
+  .head h1 { margin:0; font-size:20px; }
+  .head p { margin:2px 0 0; color:var(--muted); font-size:12.5px; }
+  .tabs { display:flex; gap:6px; margin:0 0 20px; border-bottom:1px solid var(--edge); }
+  .tab {
+    padding:9px 14px; font-size:13.5px; color:var(--muted); background:none;
+    border:0; border-bottom:2px solid transparent; cursor:pointer;
+  }
+  .tab:hover { color:var(--text); }
+  .tab.on { color:var(--text); border-bottom-color:var(--accent); font-weight:600; }
+  .bar { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:18px; }
+  .bar .grow { flex:1; min-width:190px; }
+  .bar label { margin:0 0 6px; }
+  .btn {
+    padding:11px 15px; font-size:13.5px; font-weight:600; color:#fff; cursor:pointer;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    border:0; border-radius:9px; white-space:nowrap;
+  }
+  .btn:hover { filter:brightness(1.08); }
+  .btn.ghost { background:#1b2333; border:1px solid var(--edge); color:var(--text); font-weight:500; }
+  .btn.ghost:hover { background:#222c40; }
+  .btn.danger { background:rgba(255,107,107,.12); border:1px solid rgba(255,107,107,.35); color:#ffb3b3; }
+  .btn.danger:hover { background:rgba(255,107,107,.2); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th, td { text-align:left; padding:10px 10px; border-bottom:1px solid var(--edge); vertical-align:middle; }
+  th { font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); font-weight:600; }
+  td.mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:var(--muted); }
+  .pill { display:inline-block; padding:3px 9px; font-size:11.5px; border-radius:20px; border:1px solid var(--edge); }
+  .pill.admin { color:#b9c6ff; background:rgba(79,124,255,.14); border-color:rgba(79,124,255,.35); }
+  .pill.user { color:#9fb0c9; background:#161d2b; }
+  .pill.on { color:#8ff0bb; background:rgba(60,220,140,.12); border-color:rgba(60,220,140,.3); }
+  .pill.off { color:#ffb3b3; background:rgba(255,107,107,.12); border-color:rgba(255,107,107,.3); }
+  .row-actions { display:flex; gap:6px; justify-content:flex-end; }
+  .row-actions .btn { padding:6px 10px; font-size:12px; }
+  .empty { padding:34px; text-align:center; color:var(--muted); font-size:13.5px; }
+  .toast {
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    padding:11px 18px; font-size:13.5px; border-radius:10px;
+    background:#161d2b; border:1px solid var(--edge); box-shadow:0 10px 30px rgba(0,0,0,.4);
+    opacity:0; pointer-events:none; transition:opacity .2s; z-index:50;
+  }
+  .toast.show { opacity:1; }
+  .toast.bad { color:#ffd7d7; border-color:rgba(255,107,107,.4); }
+  .toast.good { color:#c9f7dd; border-color:rgba(60,220,140,.4); }
+</style>
+</head>
+<body>
+  <div class="bg"><span class="orb orb-a"></span><span class="orb orb-b"></span></div>
+
+  <main class="wrap panel">
+    <section class="card">
+      <div class="head">
+        <img src="/icon.png" alt="">
+        <div style="flex:1">
+          <h1>Administration</h1>
+          <p id="who">Signed in</p>
+        </div>
+        <button class="btn ghost" id="back">Back to chat</button>
+        <button class="btn ghost" id="logout">Sign out</button>
+      </div>
+
+      <div class="tabs">
+        <button class="tab on" data-tab="users">Users</button>
+        <button class="tab" data-tab="files">All files</button>
+        <button class="tab" data-tab="account">My account</button>
+      </div>
+
+      <!-- ------------------------------------------------------ users -->
+      <section id="tab-users">
+        <div class="bar">
+          <div class="grow"><label for="nu">New username</label>
+            <input id="nu" type="text" placeholder="e.g. fabian" autocomplete="off"></div>
+          <div class="grow"><label for="np">Password</label>
+            <input id="np" type="password" placeholder="minimum 8 characters" autocomplete="new-password"></div>
+          <div><label for="nr">Role</label>
+            <select id="nr" style="padding:12px 14px;background:#0d111a;color:var(--text);border:1px solid var(--edge);border-radius:10px">
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select></div>
+          <button class="btn" id="create">Create user</button>
+        </div>
+        <table>
+          <thead><tr>
+            <th>User</th><th>Role</th><th>Status</th><th>Created</th><th></th>
+          </tr></thead>
+          <tbody id="users"></tbody>
+        </table>
+        <div class="empty" id="users-empty" hidden>No users yet.</div>
+      </section>
+
+      <!-- ------------------------------------------------------ files -->
+      <section id="tab-files" hidden>
+        <div class="bar">
+          <div class="grow"><label for="fo">Filter by owner</label>
+            <select id="fo" style="padding:12px 14px;background:#0d111a;color:var(--text);border:1px solid var(--edge);border-radius:10px"></select></div>
+          <div id="fstat" style="color:var(--muted);font-size:13px;align-self:center"></div>
+        </div>
+        <table>
+          <thead><tr>
+            <th>File</th><th>Owner</th><th>Kind</th><th>Size</th><th>Chunks</th><th>Uploaded</th><th></th>
+          </tr></thead>
+          <tbody id="files"></tbody>
+        </table>
+        <div class="empty" id="files-empty" hidden>No files uploaded yet.</div>
+      </section>
+
+      <!-- ------------------------------------------------------ account -->
+      <section id="tab-account" hidden>
+        <p style="color:var(--muted);font-size:13.5px;margin:0 0 4px">
+          Change the password for <strong id="acct-user" style="color:var(--text)"></strong>.
+          You will stay signed in on this device.
+        </p>
+        <div style="max-width:420px">
+          <label for="cur">Current password</label>
+          <input id="cur" type="password" autocomplete="current-password">
+          <label for="nw">New password</label>
+          <input id="nw" type="password" autocomplete="new-password" placeholder="minimum 8 characters">
+          <label for="nw2">Confirm new password</label>
+          <input id="nw2" type="password" autocomplete="new-password">
+          <button class="btn" id="chpw" style="margin-top:18px;width:100%">Update password</button>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+<script src="/admin.js?v=1"></script>
+</body>
+</html>

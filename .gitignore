@@ -1,0 +1,39 @@
+# Secrets — never commit these
+.env
+.env.local
+*.env
+!.env.example
+backend/.env
+
+# Session signing key, generated on first run
+backend/data/.session_secret
+
+# Runtime data: database, uploads, generated page images
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Backups produced by ops/docchat-backup.sh
+*.tar.gz
+backups/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

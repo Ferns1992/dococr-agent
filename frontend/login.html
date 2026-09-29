@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in &middot; DocChat</title>
+<link rel="icon" href="/icon.png">
+<link rel="stylesheet" href="/login.css?v=1">
+</head>
+<body>
+  <div class="bg"><span class="orb orb-a"></span><span class="orb orb-b"></span></div>
+
+  <main class="wrap">
+    <section class="card">
+      <div class="brand">
+        <img src="/icon.png" alt="">
+        <div>
+          <h1>DocChat</h1>
+          <p>Private document intelligence</p>
+        </div>
+      </div>
+
+      <form id="form" autocomplete="on" novalidate>
+        <label for="username">Username</label>
+        <div class="field">
+          <input id="username" name="username" type="text" placeholder="your username"
+                 autocomplete="username" required autofocus>
+        </div>
+
+        <label for="password">Password</label>
+        <div class="field">
+          <input id="password" name="password" type="password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"
+                 autocomplete="current-password" required>
+          <button type="button" class="reveal" id="reveal" aria-label="Show password">Show</button>
+        </div>
+
+        <p class="error" id="error" role="alert" hidden></p>
+
+        <button class="submit" id="submit" type="submit">
+          <span class="label">Sign in</span>
+          <span class="spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <p class="note">Accounts are created by your administrator. There is no public sign-up.</p>
+    </section>
+
+    <p class="foot">Protected workspace &middot; 1&nbsp;GB private cloud instance</p>
+  </main>
+
+<script src="/login.js?v=1"></script>
+</body>
+</html>
