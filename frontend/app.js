@@ -603,7 +603,11 @@ const pv = {
     document.getElementById("pv-title").textContent = "Loading…";
     try {
       const res = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/preview`);
-      if (!res.ok) throw new Error(`Preview failed (${res.status})`);
+      if (!res.ok) {
+        const e = new Error(`Preview failed (${res.status})`);
+        e.status = res.status;
+        throw e;
+      }
       const d = await res.json();
       this.type = d.preview_type;
       document.getElementById("pv-title").textContent =
@@ -616,8 +620,22 @@ const pv = {
       dl.style.display = d.download_url ? "" : "none";
       this.render(d);
     } catch (err) {
-      body.innerHTML =
-        `<p class="pv-error">Could not open this preview.<br><code>${escapeHtml(String(err.message || err))}</code></p>`;
+      const status = err && err.status;
+      const btn = document.querySelector(
+        `[data-preview="${(window.CSS && CSS.escape) ? CSS.escape(this.sourceId || "") : (this.sourceId || "")}"]`);
+      if (status === 410) {
+        body.innerHTML =
+          `<p class="pv-note">This document was deleted, so there is no longer a
+           preview for it.</p>`;
+        if (btn) {
+          const loc = btn.querySelector(".loc");
+          if (loc) loc.style.opacity = "0.35";
+          btn.disabled = true;
+        }
+      } else {
+        body.innerHTML =
+          `<p class="pv-error">Could not open this preview.<br><code>${escapeHtml(String(err.message || err))}</code></p>`;
+      }
     }
   },
 

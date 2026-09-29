@@ -495,7 +495,7 @@ def download_source(request: Request, source_id: str) -> FileResponse:
     try:
         record = db.get_source(source_id)
     except KeyError:
-        raise HTTPException(404, "Document not found")
+        raise HTTPException(410, "Document no longer exists")
     if user["role"] != auth.ROLE_ADMIN and record["user_id"] != user["id"]:
         raise HTTPException(403, "You do not have access to that document")
     if not record["stored_path"] or not os.path.isfile(record["stored_path"]):
@@ -515,7 +515,7 @@ def preview_inline(request: Request, source_id: str) -> FileResponse:
     try:
         record = db.get_source(source_id)
     except KeyError:
-        raise HTTPException(404, "Document not found")
+        raise HTTPException(410, "Document no longer exists")
     if user["role"] != auth.ROLE_ADMIN and record["user_id"] != user["id"]:
         raise HTTPException(403, "You do not have access to that document")
     if not record["stored_path"] or not os.path.isfile(record["stored_path"]):
