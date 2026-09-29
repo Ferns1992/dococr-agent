@@ -223,6 +223,31 @@
     window.location.href = "/login";
   });
 
+  // ---------------- theme (dark / light) ----------------
+  const Theme = {
+    key: "dococr.theme",
+    get() { try { return localStorage.getItem(this.key) || "dark"; } catch (e) { return "dark"; } },
+    set(v) {
+      try { localStorage.setItem(this.key, v); } catch (e) {}
+      document.documentElement.setAttribute("data-theme", v);
+      this.sync();
+    },
+    toggle() { this.set(this.get() === "light" ? "dark" : "light"); },
+    init() { document.documentElement.setAttribute("data-theme", this.get()); this.sync(); },
+    sync() {
+      const light = this.get() === "light";
+      const btn = $("theme-toggle");
+      if (btn) {
+        btn.setAttribute("aria-pressed", light ? "true" : "false");
+        const s = btn.querySelector("span");
+        if (s) s.textContent = light ? "Dark mode" : "Light mode";
+      }
+    },
+  };
+  Theme.init();
+  const themeBtn = $("theme-toggle");
+  if (themeBtn) themeBtn.addEventListener("click", () => Theme.toggle());
+
   // ------------------------------------------------------------------ boot
   (async function () {
     const data = await api("/api/me");

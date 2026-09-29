@@ -11,6 +11,25 @@
   --radius: 10px;
 }
 
+body, .sidebar, .panel, .source, .chat, .userbtn, .dropdown, .modal-card,
+.modal-card input, .btn, .cite, .bubble, .msg .bubble code, .hit,
+.pv-frame, .pv-head, .pv-canvas, .input, textarea, select, .item {
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --panel-2: #f9fbff;
+  --line: #e7ecf3;
+  --text: #1a1f36;
+  --muted: #52607a;
+  --accent: #0f9d58;
+  --accent-dim: #e4f7ec;
+  --danger: #d22f3d;
+}
+
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -76,7 +95,7 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
 
 .sources { overflow-y: auto; flex: 1; margin: 0 -4px; }
 .source { display: flex; gap: 9px; align-items: center; padding: 7px 8px; border-radius: 7px; }
-.source:hover { background: #ffffff08; }
+.source:hover { background: #ffffff10; }
 .source .meta { flex: 1; min-width: 0; }
 .source .name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .source .sub { font-size: 11px; color: var(--muted); }
@@ -150,7 +169,7 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   padding: 10px 16px; font-size: 13px; opacity: 0; transition: all .25s; pointer-events: none; max-width: 80vw;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.err { border-color: var(--danger); color: #ffb4ae; }
+.toast.err { border-color: var(--danger); color: var(--danger); }
 
 @media (max-width: 800px) {
   .app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
@@ -170,7 +189,7 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
 .job .bar { height: 4px; background: var(--panel-2); border-radius: 3px; margin-top: 7px; overflow: hidden; }
 .job .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .3s ease; }
 .job.err { border-color: var(--danger); }
-.job.err .job-step { color: #ffb4ae; }
+.job.err .job-step { color: var(--danger); }
 .job.done .bar i { background: var(--accent); }
 .job .spin {
   display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: -1px;
@@ -188,14 +207,14 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   gap: 10px;
   width: 100%;
   padding: 9px 10px;
-  background: #161d2b;
-  border: 1px solid var(--edge, #232b3a);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
   border-radius: 10px;
   color: inherit;
   cursor: pointer;
   text-align: left;
 }
-.userbtn:hover { background: #1b2434; }
+.userbtn:hover { background: var(--panel); }
 
 .avatar {
   display: grid;
@@ -224,8 +243,8 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   right: 0;
   z-index: 40;
   padding: 5px;
-  background: #161d2b;
-  border: 1px solid var(--edge, #232b3a);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, .5);
 }
@@ -243,8 +262,8 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   border-radius: 7px;
   cursor: pointer;
 }
-.dropdown .item:hover { background: #202a3c; }
-.dropdown .item.danger { color: #ffb3b3; }
+.dropdown .item:hover { background: var(--line); }
+.dropdown .item.danger { color: var(--danger); }
 .dropdown .item.danger:hover { background: rgba(255, 107, 107, .14); }
 
 /* ---------------------------------------------------------------- modal */
@@ -282,13 +301,13 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   padding: 11px 13px;
   font-size: 14.5px;
   color: inherit;
-  background: #0d111a;
-  border: 1px solid var(--edge, #232b3a);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
   border-radius: 9px;
   outline: none;
 }
 .modal-card input:focus {
-  border-color: #4f7cff;
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(79, 124, 255, .16);
 }
 
@@ -296,8 +315,8 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   margin: 12px 0 0;
   padding: 9px 11px;
   font-size: 13px;
-  color: #ffd7d7;
-  background: rgba(255, 107, 107, .1);
+  color: var(--danger);
+  background: rgba(210, 47, 61, .1);
   border: 1px solid rgba(255, 107, 107, .3);
   border-radius: 8px;
 }
@@ -305,8 +324,8 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
 .modal-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 20px; }
 .modal-actions .btn { padding: 10px 15px; font-size: 13.5px; font-weight: 600; color: #fff;
   background: linear-gradient(135deg, #4f7cff, #7a5cff); border: 0; border-radius: 9px; cursor: pointer; }
-.modal-actions .btn.ghost { background: #1b2333; border: 1px solid var(--edge, #232b3a); font-weight: 500; }
-.modal-actions .btn.ghost:hover { background: #222c40; }
+.modal-actions .btn.ghost { background: var(--panel-2); border: 1px solid var(--line); font-weight: 500; color: inherit; }
+.modal-actions .btn.ghost:hover { background: var(--line); }
 .modal-actions .btn:disabled { opacity: .6; cursor: not-allowed; }
 
 /* ----------------------------------------------------------------- chat history */
@@ -322,7 +341,7 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
   display: flex; gap: 9px; align-items: center; padding: 7px 8px;
   border-radius: 7px; cursor: pointer;
 }
-.chat:hover { background: #ffffff08; }
+.chat:hover { background: #ffffff10; }
 .chat.active { background: #76e0a014; box-shadow: inset 2px 0 0 var(--accent); }
 .chat .meta { flex: 1; min-width: 0; }
 .chat .name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -348,7 +367,7 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
 }
 .srcmode:hover { color: var(--text); }
 .srcmode.active { background: var(--panel-2); color: var(--accent); }
-.srcmode[data-src="research"].active { color: #7fb2ff; }
+.srcmode[data-src="research"].active { color: var(--accent); }
 
 .ansbadge {
   display: inline-block; font-size: 11px; color: var(--muted);
@@ -420,9 +439,78 @@ input[type=url]:focus { outline: none; border-color: var(--accent); }
 .pv-body.text { width: 100%; height: 100%; }
 .pv-body.text iframe { width: 100%; height: 100%; border: 0; }
 #pv-text { margin: 0; padding: 18px; white-space: pre-wrap; max-width: 100%; line-height: 1.5; }
-.pv-loading, .pv-error, .pv-note { padding: 28px; text-align: center; color: #555; }
+.pv-loading, .pv-note { padding: 28px; text-align: center; color: var(--muted); }
+.pv-error { padding: 28px; text-align: center; color: var(--danger); }
 .pv-error code { color: #b00020; }
 @media (max-width: 720px) {
   .pv-frame { inset: 0; border-radius: 0; }
   .pv-head { flex-wrap: wrap; }
+}
+.item.theme {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.item.theme .switch {
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--line);
+  position: relative;
+  border: 1px solid var(--line);
+}
+.item.theme .switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--text);
+  transition: transform 200ms ease;
+}
+:root[data-theme="light"] .item.theme .switch::after {
+  transform: translateX(18px);
+}
+/* elements with hardcoded dark gradients get explicit light treatment */
+:root[data-theme="light"] .modal {
+  background: rgba(20, 24, 40, .35);
+}
+:root[data-theme="light"] .modal-card {
+  background: linear-gradient(180deg, #ffffff, #f7f9ff);
+  box-shadow: 0 18px 48px rgba(20, 30, 60, .18);
+}
+:root[data-theme="light"] .avatar {
+  color: #fff;
+}
+:root[data-theme="light"] .source:hover,
+:root[data-theme="light"] .chat:hover {
+  background: rgba(0, 0, 0, .04);
+}
+:root[data-theme="light"] .msg .bubble code {
+  background: rgba(0, 0, 0, .06);
+}
+:root[data-theme="light"] .cite:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+:root[data-theme="light"] .pv-head {
+  border-bottom: 1px solid var(--line);
+}
+:root[data-theme="light"] .pv-canvas {
+  background: rgba(0, 0, 0, .03);
+}
+:root[data-theme="light"] .pv-loading,
+:root[data-theme="light"] .pv-note {
+  color: var(--muted);
+}
+:root[data-theme="light"] .pv-error {
+  color: var(--danger);
+}
+:root[data-theme="light"] .modal-err {
+  background: rgba(210, 47, 61, .08);
+  border: 1px solid rgba(210, 47, 61, .25);
+}
+:root[data-theme="light"] .dropdown .item.danger:hover {
+  background: rgba(210, 47, 61, .1);
 }

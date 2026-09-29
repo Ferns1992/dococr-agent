@@ -1,12 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("dococr.theme") || "dark";
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DocChat</title>
 <link rel="icon" type="image/png" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon.png">
-<link rel="stylesheet" href="/style.css?v=7">
+<link rel="stylesheet" href="/style.css?v=8">
 </head>
 <body>
 <div class="app">
@@ -29,6 +37,7 @@
         <span class="chev" aria-hidden="true">▾</span>
       </button>
       <div class="dropdown" id="userdrop" hidden>
+        <button class="item theme" type="button" id="theme-toggle" aria-pressed="false"><span>Light mode</span><span class="switch" aria-hidden="true"></span></button>
         <a class="item" href="/admin" id="adminlink">Admin panel</a>
         <button class="item" type="button" id="changepw">Change password</button>
         <button class="item danger" type="button" id="logout">Sign out</button>
@@ -105,7 +114,7 @@
   </main>
 </div>
 <div id="toast" class="toast"></div>
-<script src="/app.js?v=7"></script>
+<script src="/app.js?v=8"></script>
 
 <div class="modal" id="pwmodal" hidden>
   <div class="modal-card">
@@ -123,7 +132,7 @@
     </div>
   </div>
 </div>
-<script src="/session.js?v=1"></script>
+<script src="/session.js?v=2"></script>
 
 <!-- Source preview -->
 <div id="preview-modal" class="pv-modal" aria-hidden="true" role="dialog" aria-label="Source preview">

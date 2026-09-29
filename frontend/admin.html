@@ -1,11 +1,19 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("dococr.theme") || "dark";
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Admin &middot; DocChat</title>
 <link rel="icon" href="/icon.png">
-<link rel="stylesheet" href="/login.css?v=1">
+<link rel="stylesheet" href="/login.css?v=5">
 <style>
   .panel { width: min(940px, 94vw); }
   .card { padding: 30px 32px; }
@@ -69,6 +77,7 @@
           <p id="who">Signed in</p>
         </div>
         <button class="btn ghost" id="back">Back to chat</button>
+        <button class="item theme" type="button" id="theme-toggle" aria-pressed="false" style="display:inline-flex;margin-right:8px"><span>Light mode</span><span class="switch" aria-hidden="true"></span></button>
         <button class="btn ghost" id="logout">Sign out</button>
       </div>
 
@@ -137,6 +146,6 @@
   </main>
 
   <div class="toast" id="toast"></div>
-<script src="/admin.js?v=1"></script>
+<script src="/admin.js?v=2"></script>
 </body>
 </html>
