@@ -36,6 +36,11 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 EMBED_BATCH = int(os.getenv("EMBED_BATCH", "16"))
 CLIP_BATCH = int(os.getenv("CLIP_BATCH", "8"))
 TOP_K = int(os.getenv("TOP_K", "6"))
+# Vector search always returns top-k, but a weak match (e.g. "capital of
+# France" scoring 0.03 against paperclip.git) is noise, not a source. Hits
+# below this score are dropped so blend mode falls back to the model's own
+# knowledge instead of forcing irrelevant passages to be the primary source.
+MIN_HIT_SCORE = float(os.getenv("MIN_HIT_SCORE", "0.10"))
 # How many prior turns to feed the model so follow-up questions keep context.
 # 0 disables chat memory; 6 keeps the last 6 user/assistant pairs.
 HISTORY_TURNS = int(os.getenv("HISTORY_TURNS", "20"))

@@ -212,9 +212,9 @@ SYSTEM_PROMPT_NO_CONTEXT = (
     "Rules:\n"
     "- The earlier turns of this conversation are shown to you so you can follow it. "
     "When the user refers back to something already said or asked here, use it.\n"
-    "- Start your reply with the single line: Not in your documents.\n"
-    "- Then answer the question directly and usefully.\n"
-    "- Be clear about the limits of what you know and do not invent specifics.\n"
+    "- Answer the question directly and usefully from your own knowledge.\n"
+    "- Do not claim the answer comes from the user's documents. It does not.\n"
+    "- If you are not sure about a specific fact, say so rather than inventing detail.\n"
     "- Be concise. No preamble."
 )
 
@@ -810,6 +810,12 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
                 else:
                     vector = (await nvidia_client.embed_texts(client, [question], "query"))[0]
                     hits = store.search_text(vector, top_k, payload.source_id, scope)
+
+                # A low score means the query did not actually match anything
+                # in the library; the vector backend still returns a best guess.
+                # Keep hits above the relevance floor, and let blended/research
+                # mode answer from general knowledge when there is nothing real.
+                hits = [h for h in hits if (h.get("score") or 0.0) >= config.MIN_HIT_SCORE]
 
                 yield _sse("sources", {"hits": hits, "visual": payload.visual})
 
