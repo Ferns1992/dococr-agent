@@ -714,6 +714,7 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
         # Save the question up front so it is never lost, even if the
         # stream fails part-way through.
         db.add_message(conversation["id"], user["id"], "user", question, [])
+        history = _recent_turns(conversation["id"], user["id"])
         try:
             async with httpx.AsyncClient() as client:
                 if payload.visual:
@@ -758,6 +759,7 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
                         client,
                         [
                             {"role": "system", "content": SYSTEM_PROMPT_NO_CONTEXT},
+                            *history,
                             {"role": "user", "content": question},
                         ],
                     ):
@@ -845,6 +847,7 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
 
                 messages = [
                     {"role": "system", "content": system_prompt},
+                    *history,
                     {"role": "user", "content": user_content},
                 ]
 
@@ -897,6 +900,27 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _recent_turns(conversation_id: str, user_id: int) -> List[dict]:
+    """Prior user/assistant turns to feed back so follow-ups have memory."""
+    if not config.HISTORY_TURNS:
+        return []
+    try:
+        msgs = db.list_messages(conversation_id, user_id)
+    except Exception:
+        return []
+    turns: List[dict] = []
+    for m in msgs[-config.HISTORY_TURNS * 2:]:
+        role = m.get("role")
+        text = (m.get("content") or "").strip()
+        if role in ("user", "assistant") and text:
+            turns.append({"role": role, "content": text})
+    # Never send the just-added current question back as history; it is the
+    # live turn. The call site adds the current question afterwards.
+    if turns and turns[-1].get("role") == "user":
+        turns.pop()
+    return turns
 
 
 @app.post("/api/logout")

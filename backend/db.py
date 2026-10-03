@@ -208,8 +208,15 @@ def delete_source_row(source_id: str) -> dict:
 
 
 def ensure_conversation(user_id: int, conversation_id: Optional[str] = None) -> dict:
-    """Return the requested conversation if the user owns it, else their latest."""
+    """Return the requested conversation if the user owns it, else their latest.
+
+    A caller may ask for a stable id that does not exist yet (e.g. the
+    Telegram bot's "telegram" conversation). In that case create it with the
+    requested id instead of silently reusing the latest conversation, which
+    would mix web and bot turns together.
+    """
     init_db()
+    now = time.time()
     with _connect() as conn:
         if conversation_id:
             row = conn.execute(
@@ -217,19 +224,24 @@ def ensure_conversation(user_id: int, conversation_id: Optional[str] = None) -> 
             ).fetchone()
             if row:
                 return _conv(row)
-        row = conn.execute(
-            "SELECT * FROM conversations WHERE user_id=? ORDER BY updated_at DESC LIMIT 1",
-            (user_id,),
-        ).fetchone()
-        if row:
-            return _conv(row)
-        now = time.time()
-        cid = secrets.token_hex(12)
-        conn.execute(
-            "INSERT INTO conversations (id,user_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
-            (cid, user_id, "New chat", now, now),
-        )
-        created = cid
+            conn.execute(
+                "INSERT INTO conversations (id,user_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
+                (conversation_id, user_id, "Telegram", now, now),
+            )
+            created = conversation_id
+        else:
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE user_id=? ORDER BY updated_at DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if row:
+                return _conv(row)
+            cid = secrets.token_hex(12)
+            conn.execute(
+                "INSERT INTO conversations (id,user_id,title,created_at,updated_at) VALUES (?,?,?,?,?)",
+                (cid, user_id, "New chat", now, now),
+            )
+            created = cid
     return get_conversation(created)  # after commit
 
 

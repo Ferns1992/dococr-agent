@@ -19,8 +19,20 @@ except Exception:
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ADMIN_IDS = {int(x) for x in os.getenv("TELEGRAM_ADMIN_IDS", "").split(",") if x.strip().isdigit()}
+PASSCODE = os.getenv("TELEGRAM_PASSCODE", "")
+LOCK_MINUTES = int(os.getenv("TELEGRAM_LOCK_MINUTES", "60") or "60")
 APP = "http://127.0.0.1:8077"
 BOT_WHO = "https://api.telegram.org"
+
+# Per-chat inactivity lock. last_active tracks when the admin last interacted;
+# after LOCK_MINUTES with no message the session is locked and the next message
+# must carry the passcode (unless it is kept in .env as "" to disable).
+if PASSCODE:
+    _last_active: dict = {}
+    _pending: dict = {}   # chat_id -> last raw update while locked
+    _prompted: dict = {}  # chat_id -> lock message already shown
+else:
+    _last_active = _pending = _prompted = None
 
 
 def tg(method: str, **params):
@@ -430,6 +442,24 @@ def handle_upload(chat_id: int, file_id: str, name: str, mime: str, app: AppClie
         logging.warning("ingest failed for %s: %s", name, detail)
 
 
+def _dispatch(chat_id: int, msg: dict, app: AppClient):
+    """Route one inbound message to the matching handler."""
+    text = (msg.get("text") or "").strip()
+    if text:
+        handle_command(chat_id, text, app)
+        return
+    doc = msg.get("document")
+    if doc:
+        name = doc.get("file_name") or "document"
+        mime = doc.get("mime_type") or "application/octet-stream"
+        handle_upload(chat_id, doc.get("file_id"), name, mime, app)
+        return
+    photo = msg.get("photo")
+    if photo:
+        largest = photo[-1]
+        handle_upload(chat_id, largest.get("file_id"), "photo.jpg", "image/jpeg", app)
+
+
 def poll_once(app: AppClient, offset):
     try:
         up = tg("getUpdates", offset=offset or 1, timeout=50, allowed_updates=["message"])
@@ -446,20 +476,33 @@ def poll_once(app: AppClient, offset):
             send_text(chat_id, "This bot is private and restricted to its owner.")
             continue
         text = (msg.get("text") or "").strip()
-        if text:
-            handle_command(chat_id, text, app)
-            continue
-        doc = msg.get("document")
-        if doc:
-            name = doc.get("file_name") or "document"
-            mime = doc.get("mime_type") or "application/octet-stream"
-            handle_upload(chat_id, doc.get("file_id"), name, mime, app)
-            continue
-        photo = msg.get("photo")
-        if photo:
-            largest = photo[-1]
-            handle_upload(chat_id, largest.get("file_id"), "photo.jpg", "image/jpeg", app)
-            continue
+
+        if _pending is not None:
+            now = time.time()
+            idle = now - _last_active.get(chat_id, 0)
+            if idle > LOCK_MINUTES * 60:
+                if text == PASSCODE:
+                    _last_active[chat_id] = now
+                    _prompted[chat_id] = False
+                    pending = _pending.pop(chat_id, None)
+                    if pending is not None:
+                        send_text(chat_id, "Unlocked. Answering your last request.")
+                        _dispatch(chat_id, pending, app)
+                    else:
+                        send_text(chat_id, "Unlocked.")
+                else:
+                    _pending[chat_id] = msg
+                    if not _prompted.get(chat_id):
+                        _prompted[chat_id] = True
+                        send_text(
+                            chat_id,
+                            "Session timed out after "
+                            f"{LOCK_MINUTES} minute{'s' if LOCK_MINUTES != 1 else ''} of "
+                            "inactivity. Send your passcode to unlock.",
+                        )
+                continue
+        _last_active[chat_id] = time.time()
+        _dispatch(chat_id, msg, app)
     return offset
 
 
