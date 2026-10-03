@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 import pathlib
 import sys
 import time
 
 import httpx
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 BASE = pathlib.Path(__file__).resolve().parent
 try:
@@ -208,15 +211,23 @@ def do_ask(chat_id: int, question: str, app: AppClient):
     send_text(chat_id, reply)
 
 
-def handle_upload(chat_id: int, file_info: dict, name: str, mime: str, app: AppClient):
+def handle_upload(chat_id: int, file_id: str, name: str, mime: str, app: AppClient):
     tg("sendChatAction", chat_id=chat_id, action="typing")
-    fp = file_info.get("file_path")
-    if not fp:
-        send_text(chat_id, f"Could not retrieve the file ({name}).")
-        return
-    r = httpx.get(f"{BOT_WHO}/file/bot{TOKEN}/{fp}", timeout=180)
-    if r.status_code != 200:
-        send_text(chat_id, f"Could not download the file from Telegram ({name}).")
+    try:
+        info = tg("getFile", file_id=file_id)
+        fp = (info.get("result") or {}).get("file_path")
+        if not fp:
+            send_text(chat_id, f"Could not retrieve the file ({name}).")
+            logging.warning("getFile returned no file_path: %s", info)
+            return
+        r = httpx.get(f"{BOT_WHO}/file/bot{TOKEN}/{fp}", timeout=180)
+        if r.status_code != 200:
+            send_text(chat_id, f"Could not download the file from Telegram ({name}).")
+            logging.warning("file download failed: status=%s", r.status_code)
+            return
+    except Exception as exc:
+        send_text(chat_id, f"Could not download the file ({name}): {exc}")
+        logging.exception("telegram download failed")
         return
     status, source_id, chunks, detail = file_ingest(app, r.content, name, mime)
     if status == "done":
@@ -226,8 +237,10 @@ def handle_upload(chat_id: int, file_info: dict, name: str, mime: str, app: AppC
         if source_id:
             msg += f".\nID: {source_id}"
         send_text(chat_id, msg)
+        logging.info("ingested %s -> %s (%s chunks)", name, source_id, chunks)
     else:
         send_text(chat_id, f"Failed to ingest '{name}': {detail}")
+        logging.warning("ingest failed for %s: %s", name, detail)
 
 
 def poll_once(app: AppClient, offset):
@@ -253,12 +266,12 @@ def poll_once(app: AppClient, offset):
         if doc:
             name = doc.get("file_name") or "document"
             mime = doc.get("mime_type") or "application/octet-stream"
-            handle_upload(chat_id, doc, name, mime, app)
+            handle_upload(chat_id, doc.get("file_id"), name, mime, app)
             continue
         photo = msg.get("photo")
         if photo:
             largest = photo[-1]
-            handle_upload(chat_id, largest, "photo.jpg", "image/jpeg", app)
+            handle_upload(chat_id, largest.get("file_id"), "photo.jpg", "image/jpeg", app)
             continue
     return offset
 
