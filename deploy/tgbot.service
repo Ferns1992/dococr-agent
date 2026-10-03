@@ -1,0 +1,15 @@
+[Unit]
+Description=DocChat Telegram bot (long-polling)
+After=network-online.target docchat.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/docchat/backend
+ExecStart=/opt/docchat/backend/venv/bin/python /opt/docchat/backend/tgbot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=DocChat backup with Telegram notification
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/docchat-backup-notify.sh

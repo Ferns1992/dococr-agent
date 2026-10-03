@@ -1,0 +1,9 @@
+[Unit]
+Description=Nightly DocChat backup with Telegram notification
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
