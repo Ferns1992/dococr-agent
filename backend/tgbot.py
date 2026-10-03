@@ -312,6 +312,29 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
             or ql in (s.get("source_name") or "").lower()
             or ql == (s.get("source_id") or "").lower()]
     if not hits:
+        # token-overlap fallback: "a hold of this file openrag" -> OpenRAG
+        skip = {
+            "a","an","the","this","that","these","those","of","to","for","with",
+            "get","gets","gotten","gimme","me","my","i","i'm","id","can","could",
+            "would","want","wants","please","pls","file","files","hold","way","there",
+            "is","are","was","am","have","has","send","sent","show","download",
+            "document","docs","image","images","diagram","infographic","list","name",
+            "on","at","by","and","or","but","in","it","its","you","your"
+        }
+        qtoks = [w for w in re.findall(r"[a-z0-9]+", ql) if len(w) >= 3 and w not in skip]
+        scored = []
+        for s in srcs.json().get("sources", []):
+            name = (s.get("filename") or s.get("source_name") or "").lower()
+            if not qtoks:
+                continue
+            score = sum(1 for w in set(qtoks) if w in name)
+            if score > 0:
+                scored.append((score, s))
+        if scored:
+            scored.sort(key=lambda x: (-x[0], (x[1].get("source_name") or "").lower()))
+            best_score = scored[0][0]
+            hits = [s for sc, s in scored if sc == best_score][:3]
+    if not hits:
         send_text(chat_id, f"No source matches '{query}'. Try /sources to see names.")
         return
     s = hits[0]
