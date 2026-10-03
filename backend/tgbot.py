@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sys
 import time
 
@@ -26,7 +27,9 @@ def tg(method: str, **params):
     if "json" in params:
         r = httpx.post(f"{BOT_WHO}/bot{TOKEN}/{method}", json=params["json"], timeout=120)
     elif "files" in params:
-        r = httpx.post(f"{BOT_WHO}/bot{TOKEN}/{method}", files=params["files"], timeout=300)
+        files = params["files"]
+        data = {k: v for k, v in params.items() if k != "files"}
+        r = httpx.post(f"{BOT_WHO}/bot{TOKEN}/{method}", data=data, files=files, timeout=300)
     else:
         r = httpx.post(f"{BOT_WHO}/bot{TOKEN}/{method}", json=params, timeout=120)
     return r.json()
@@ -200,7 +203,76 @@ def handle_command(chat_id: int, text: str, app: AppClient):
         do_ask(chat_id, q, app)
         return
 
+    # Natural language file request? e.g. "send me the OpenRAG image",
+    # "download resume.pdf", "can you show me the workflow diagram?"
+    q = try_file_request(text)
+    if q:
+        send_a_file(chat_id, q, app)
+        return
+
     do_ask(chat_id, text, app)
+
+
+def try_file_request(text: str) -> str:
+    """Return a source query when the message reads like a request for a file."""
+    t = text.strip().rstrip(".!?,")
+    low = t.lower()
+    # peel politeness so "please send me X", "can you send the X" work
+    for lead in ("please ", "pls ", "can you ", "could you ", "kindly ", "hey ", "hi ", "hello "):
+        if low.startswith(lead):
+            low = low[len(lead):]
+            t = t[len(lead):].strip()
+    prefixes = (
+        "send me ",
+        "send ",
+        "download ",
+        "give me ",
+        "gimme ",
+        "fetch ",
+        "show me ",
+        "attach ",
+        "return the ",
+        "get me the ",
+        "can you send",
+        "can i have",
+        "can I get",
+        "i want the ",
+        "i want ",
+    )
+    blob = " " + low + " "
+    has_verb = any(p in low for p in prefixes) or any(
+        v in blob for v in (" the file ", " this file ", " that file ", " file please", " pd f")
+    )
+    looks_like_filename = low.rstrip().endswith(
+        (".png", ".jpg", ".jpeg", ".pdf", ".docx", ".doc", ".txt", ".md", ".html")
+    )
+    if not (has_verb or looks_like_filename):
+        return ""
+    rest = t
+    for p in prefixes:
+        if low.startswith(p):
+            rest = t[len(p):].strip()
+            break
+    rest = rest.strip(" \t\n:;.,!?\"'")
+    if not rest:
+        return ""
+    # strip trailing filler like "file", "please", "for me", "the image"
+    for chase in (" please", " the file", " the image", " the document",
+                  " image", " the infographic", " infographic", " document",
+                  " for me", " from the library", " file"):
+        if rest.lower().endswith(chase):
+            rest = rest[:-len(chase)].strip()
+            if not rest:
+                return ""
+    # drop a leading "the "/"a "/"an " and trailing format words so the
+    # substring match against the source name succeeds
+    low = rest.lower()
+    for lead in ("the ", "a ", "an "):
+        if low.startswith(lead):
+            rest = rest[len(lead):].strip()
+            break
+    rest = re.sub(r"\s+(png|jpg|jpeg|pdf|docx?|txt|md|html|diagram|image)$", "", rest, flags=re.I).strip()
+    return rest
 
 
 def do_ask(chat_id: int, question: str, app: AppClient):
