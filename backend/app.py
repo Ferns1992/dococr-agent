@@ -162,6 +162,18 @@ Place the citation at the end of the sentence it supports.
 - Be concise and concrete. No preamble, no restating the question.
 """
 
+# Shared writing style: friendly tone, light emoji use, clean readable text.
+_STYLE = """\
+The user reads your replies in Telegram, so keep them clean, warm, and easy to scan on a phone:
+- Use a friendly, warm tone and include one emoji in nearly every reply, used naturally (😊 or 👋 to open a greeting, 📄 when referring to a document, ✅ when you confirmed something). Never put emojis in citations, on every line, or in every bullet point.
+- Keep the reply short and to the point: say the useful part first, then at most a little supporting detail. Skip filler words entirely.
+- Use short plain paragraphs, one idea each. Bullets are fine for lists of three or more items, but keep every bullet to one short line.
+- FORMATTING BANS (strict): never use markdown tables or pipe characters (|); never use --- or === divider lines; never use ### or #### headers; never use code blocks; avoid heavy **bold** on whole paragraphs (one short **bold** lead-in at most). Telegram does not render any of that — it shows the raw characters and the reply looks broken.
+- To lay out a list, use simple "- " or "• " bullets, or short numbered lines like "1. ...". No columns.
+- Cite sources with a compact [1] [2] only where you actually used them, at the end of the sentence.
+- Example of the style: "Here's the quick version. 😊\n• OpenRAG stitches together parsing, vector search, and an LLM so answers are grounded in your documents.\n• Setup takes about 10 minutes.\n\nWant the step-by-step guide [2]?"
+"""
+
 # Strict mode: the library is the only permitted source. This is the right
 # default when the answer has to be traceable to something the user uploaded.
 SYSTEM_PROMPT = (
@@ -176,6 +188,7 @@ SYSTEM_PROMPT = (
     "conversation, say plainly that the documents do not cover it. Do not guess or fill in "
     "from general knowledge.\n"
     + _GROUNDING_RULES
+    + _STYLE
 )
 
 # Blend mode: try the user's documents first, but fall back to general
@@ -210,6 +223,7 @@ SYSTEM_PROMPT_BLEND = (
     "they gave their name, a preference, or an earlier fact, recalling it is correct "
     "and needs no passage.\n"
     + _GROUNDING_RULES
+    + _STYLE
 )
 
 # Blend mode with nothing retrieved at all.
@@ -223,6 +237,7 @@ SYSTEM_PROMPT_NO_CONTEXT = (
     "- Do not claim the answer comes from the user's documents. It does not.\n"
     "- If you are not sure about a specific fact, say so rather than inventing detail.\n"
     "- Be concise. No preamble."
+    + _STYLE
 )
 
 # Research mode: web sources are numbered [W1], [W2] alongside the user's own
@@ -249,6 +264,7 @@ SYSTEM_PROMPT_RESEARCH = (
     "- If the sources do not settle the question, say so plainly rather than guessing.\n"
     "- Be concise and concrete. No preamble, do not restate the question, and do not "
     "announce that you are searching."
+    + _STYLE
 )
 
 # No documents, no web results: pure model knowledge, clearly labelled.
@@ -264,6 +280,7 @@ SYSTEM_PROMPT_MEMORY_ONLY = (
     "- If the question is about something that may have changed recently, say that your "
     "information may be out of date.\n"
     "- Be concise. No preamble."
+    + _STYLE
 )
 
 # Casual greetings and smalltalk: no retrieval, just a friendly reply. This
@@ -275,6 +292,8 @@ SYSTEM_PROMPT_SMALLTALK = (
     "The user is just chatting — a greeting, a thanks, a bye, or a quick "
     "pleasantry.\n\n"
     "Rules:\n"
+    "- Warm up with an emoji (😊 or 👋) as the very first thing: 'Hi there! "
+    "😊 How can I help?'\n"
     "- Reply naturally and briefly, matching the user's tone.\n"
     "- Do not reference any document, data source, or search. This is pure chat.\n"
     "- If the user is asking about your capabilities or who you are, answer "
@@ -282,6 +301,7 @@ SYSTEM_PROMPT_SMALLTALK = (
     "- If an earlier turn of this conversation is relevant (for example, they "
     "just said thanks after you answered something), acknowledge it.\n"
     "- No preamble, no bullet points."
+    + _STYLE
 )
 
 
@@ -291,6 +311,43 @@ _SMALLTALK = re.compile(
     r"hiya|lo+|hola|hi there|hey there|hello there)$",
     re.IGNORECASE,
 )
+
+# Looser greeting family for common variants/misspellings of the first word:
+# "hellow", "helo", "helloo", "hallo", "ello", "heyy", "yooo", "wassup"...
+_GREETING_WORD = re.compile(
+    r"^(h?[aeio]?l+o+w?|h[ei]+y+|h?[iy]+|yo+|sup|wassup|hola|hiya|owdy)$",
+    re.IGNORECASE,
+)
+
+# Casual acknowledgments / agreement ("ok great", "nice", "cool, thanks",
+# "got it", "alright") are conversation, not document queries. Matched on
+# the *whole* short message so "ok great, explain paperclip" still retrieves.
+_ACK_WORDS = {
+    "ok", "okay", "k", "kk", "sure", "alright", "alrighty", "right",
+    "great", "nice", "cool", "awesome", "sweet", "perfect", "good", "fine",
+    "fair", "noted", "understood", "got", "gotcha", "roger", "done", "yep",
+    "yeah", "yes", "yup", "ah", "aah", "hmm", "mmm", "okie", "thanks",
+    "thank", "ty", "thx", "thnx", "thnk", "love", "loved", "liked", "like",
+    "haha", "lol", "nicee", "coolio", "perfecto", "amazing", "goodo",
+    "it", "that", "this", "these", "those", "works", "work", "well",
+    "very", "so", "much", "do", "does", "did", "now", "then",
+    "lad", "mate", "bro", "man", "dude", "my", "your", "you", "me",
+    "one",
+}
+
+
+def _is_acknowledgment(text: str) -> bool:
+    """True for short praise/acknowledgment messages that should never touch
+    retrieval, e.g. "ok great", "nice", "cool thanks", "got it", "loved it",
+    "ok great lad you liked it 😊"."""
+    t = "".join(ch for ch in text.strip().lower() if ord(ch) < 128)
+    t = t.strip().rstrip(".!?,").strip()
+    if not t or len(t.split()) > 6:
+        return False
+    for w in t.replace(",", " ").replace("-", " ").split():
+        if w not in _ACK_WORDS:
+            return False
+    return True
 
 
 def _is_smalltalk(text: str) -> bool:
@@ -305,7 +362,40 @@ def _is_smalltalk(text: str) -> bool:
              "thank you so much", "ty", "thx", "bye", "goodbye", "see you",
              "good night", "goodnight", "ok", "okay", "hello", "hey", "hi"}:
         return True
+    if _is_acknowledgment(t):
+        return True
+    # "hi again", "hey fabian", "hellow again", "hello zephyr" etc. A
+    # greeting word plus a short casual tail (a name, "again", "there") is
+    # still pure smalltalk and must not ground on a retrieved document.
+    words = t.split()
+    if words and (
+        _SMALLTALK.match(words[0].strip(",-—:;!"))
+        or _GREETING_WORD.match(words[0].strip(",-—:;!"))
+    ):
+        tail = " ".join(w.strip(",-—:;!") for w in words[1:])
+        tail = tail.split(", ")[0] if ", " in tail else tail
+        if not tail or len(tail) <= 12:
+            return True
+        if tail in {"who are you", "what can you do", "what are you",
+                    "how are you", "how's it going", "what's going on",
+                    "are you there", "you there", "anyone there"}:
+            return True
     return False
+
+
+_EMOJI_RE = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF]")
+
+
+def _ensure_emoji(text: str) -> str:
+    """Guarantee conversational replies carry an emoji, since the model
+    sometimes skips it despite the style guide. If the reply already has an
+    emoji, leave it alone; otherwise append a smiley."""
+    if _EMOJI_RE.search(text):
+        return text
+    t = text.strip()
+    if not t:
+        return "Hi! 😊"
+    return t + " 😊"
 
 
 class ChatRequest(BaseModel):
@@ -796,9 +886,12 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
                     ):
                         st.append(delta)
                         yield _sse("delta", {"text": delta})
-                    text_out = "".join(st).strip()
-                    if not text_out:
-                        text_out = "Hi!"
+                    raw_out = "".join(st).strip()
+                    if not raw_out:
+                        raw_out = "Hi!"
+                    text_out = _ensure_emoji(raw_out)
+                    if len(text_out) > len(raw_out):
+                        yield _sse("delta", {"text": text_out[len(raw_out):]})
                     db.add_message(conversation["id"], user["id"], "assistant", text_out, [])
                     yield _sse(
                         "done",
@@ -866,13 +959,16 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
                         blend_answer.append(delta)
                         yield _sse("delta", {"text": delta})
 
-                    text_out = "".join(blend_answer).strip()
-                    if not text_out:
-                        text_out = (
+                    raw_out = "".join(blend_answer).strip()
+                    if not raw_out:
+                        raw_out = (
                             "I could not find anything in the library or online, and did "
                             "not have a reliable answer from memory either."
                         )
-                        yield _sse("delta", {"text": text_out})
+                        yield _sse("delta", {"text": raw_out})
+                    text_out = _ensure_emoji(raw_out)
+                    if len(text_out) > len(raw_out):
+                        yield _sse("delta", {"text": text_out[len(raw_out):]})
                     db.add_message(conversation["id"], user["id"], "assistant", text_out, [])
                     yield _sse(
                         "done",
@@ -973,8 +1069,12 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
                         "Try rephrasing, or check the document was indexed."
                     )
 
+                final_text = _ensure_emoji("".join(answer))
+                if len(final_text) > len("".join(answer)):
+                    yield _sse("delta", {"text": final_text[len("".join(answer)):]})
+
                 db.add_message(
-                    conversation["id"], user["id"], "assistant", "".join(answer), hits
+                    conversation["id"], user["id"], "assistant", final_text, hits
                 )
                 yield _sse(
                     "done",
@@ -993,7 +1093,7 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
 
     return StreamingResponse(
         event_stream(),
-        media_type="text/event-stream",
+        media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 

@@ -195,5 +195,5 @@ async def ingest_url(client: httpx.AsyncClient, url: str, progress=None, user_id
 
 
 def safe_name(filename: str) -> str:
-    cleaned = re.sub(r"[^\w\-. ]+", "_", filename).strip() or "document"
-    return cleaned[:120]
+    cleaned = re.sub(r"[/\\\x00-\x1f]+", "_", filename).strip() or "document"
+    return cleaned[:240]

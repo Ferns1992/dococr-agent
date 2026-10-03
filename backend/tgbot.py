@@ -4,9 +4,14 @@ import os
 import pathlib
 import re
 import sys
+import threading
 import time
 
 import httpx
+
+# Last document delivered per chat, so follow-ups like "explain the" can be
+# anchored on the file the user actually meant (see do_ask).
+LAST_SENT_FILE: dict = {}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -27,12 +32,16 @@ BOT_WHO = "https://api.telegram.org"
 # Per-chat inactivity lock. last_active tracks when the admin last interacted;
 # after LOCK_MINUTES with no message the session is locked and the next message
 # must carry the passcode (unless it is kept in .env as "" to disable).
+MAX_WRONG_PASSCODE = 3
+BLOCK_MINUTES = 60
 if PASSCODE:
     _last_active: dict = {}
-    _pending: dict = {}   # chat_id -> last raw update while locked
-    _prompted: dict = {}  # chat_id -> lock message already shown
+    _pending: dict = {}      # chat_id -> last raw update while locked
+    _prompted: dict = {}     # chat_id -> lock message already shown
+    _failed: dict = {}       # chat_id -> consecutive wrong passcode count
+    _blocked_until: dict = {}  # chat_id -> time.time() when block expires
 else:
-    _last_active = _pending = _prompted = None
+    _last_active = _pending = _prompted = _failed = _blocked_until = None
 
 
 def tg(method: str, **params):
@@ -225,10 +234,29 @@ def handle_command(chat_id: int, text: str, app: AppClient):
     do_ask(chat_id, text, app)
 
 
+# Bare conversational continuations that must never be treated as file
+# requests: "i want explain", "tell me more", "show me it" etc. refer to the
+# conversation, not to a document, and should fall through to chat memory.
+_FOLLOWUP_WORDS = {
+    "explain", "more", "it", "that", "this", "those", "these", "know",
+    "see", "tell", "show", "continue", "again", "info", "information",
+    "details", "detail", "describe", "what", "why", "how", "the file",
+}
+
+
 def try_file_request(text: str) -> str:
     """Return a source query when the message reads like a request for a file."""
     t = text.strip().rstrip(".!?,")
     low = t.lower()
+    # "explain this file", "describe the resume", "what is in openrag" are
+    # questions about a document, not requests to receive it as a file. Let
+    # the normal chat path answer from the retrieved content instead of the
+    # file-send path just dumping the attachment.
+    if any(v in low for v in (
+        "explain", "describe", "what is in ", "what's in ", "what does it say",
+        "tell me about", "tell me more about", "detail", "more about",
+    )):
+        return ""
     # peel politeness so "please send me X", "can you send the X" work
     for lead in ("please ", "pls ", "can you ", "could you ", "kindly ", "hey ", "hi ", "hello "):
         if low.startswith(lead):
@@ -281,6 +309,11 @@ def try_file_request(text: str) -> str:
     rest = rest.strip(" \t\n:;.,!?\"'")
     if not rest:
         return ""
+    # "i want explain" / "send me more" are conversational continuations
+    # (memory follow-ups), not file requests. Bail so the message reaches
+    # the normal chat path.
+    if rest.lower() in _FOLLOWUP_WORDS:
+        return ""
     # if a token carries a real file extension, prefer everything up to and
     # including that token: "Fabian Milton Fernandes Resume.pdf this" -> the PDF
     mt = re.search(r"([^ ]+\.(?:png|jpg|jpeg|pdf|docx?|txt|md|html)(?:[^ ]*))$", rest, re.I)
@@ -306,19 +339,134 @@ def try_file_request(text: str) -> str:
     return rest
 
 
+_REFERENTIAL_RE = re.compile(
+    r"\b(the file|this file|that file|the document|this document|that document|"
+    r"the resume|the pdf|the image|the diagram|the infographic|the one|that one|"
+    r"the thing|the stuff|it|them|these|those)\b|"
+    r"\b(explain|describe|tell me about|what about the)\s+?the?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _resolve_followup(chat_id: int, question: str) -> str:
+    """Anchor a vague follow-up on the last file we sent for this chat."""
+    last = LAST_SENT_FILE.get(chat_id)
+    if not last:
+        return question
+    ql = question.lower()
+    # Question names a file already -> nothing to resolve.
+    if last.lower() in ql:
+        return question
+    # Only resolve when the question *refers* to a file without naming it.
+    if not _REFERENTIAL_RE.search(ql):
+        return question
+    # Bare pronouns like "it"/"them" are ambiguous; require a file-ish or
+    # explanation-like verb so we don't hijack ordinary chat.
+    looks_like_followup = any(w in ql for w in (
+        "explain", "describe", "about", "detail", "tell me", "what is", "what's",
+        "what about", "more", "content", "summar", "send", "give me", "again",
+    ))
+    if not looks_like_followup:
+        return question
+    return f"[You sent file: {last}.] {question}"
+
+
 def do_ask(chat_id: int, question: str, app: AppClient):
+    # Native Telegram status: "typing…" under the bot's name at the top of the
+    # chat. Called now and re-sent every 4s while generating (Telegram clears
+    # it ~5s after the last action AND whenever a bot message arrives, so the
+    # heartbeat below keeps it alive across the placeholder edit as well).
     tg("sendChatAction", chat_id=chat_id, action="typing")
-    answer, sources = app.chat(question, mode="blend")
+
+    # A follow-up like "explain the", "what about it", "tell me about the one
+    # you sent" refers to the last file we delivered. The file-send path
+    # never writes to the app conversation, so the RAG has no memory of it;
+    # resolve the reference here and pass the file name along explicitly.
+    question = _resolve_followup(chat_id, question)
+
+    # The model stream can take a while. Run it on a dedicated thread so the
+    # heartbeat keeps the native typing status alive. Post a lightweight "…"
+    # placeholder too and edit it into the real answer when done, so there is
+    # visible feedback on clients that do not render bot chat actions.
+    result = {}
+
+    def _run():
+        try:
+            result["answer"], result["sources"] = app.chat(question, mode="blend")
+        except Exception as exc:  # pragma: no cover
+            result["error"] = exc
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+
+    placeholder = tg("sendMessage", chat_id=chat_id, text="…")
+    mid = placeholder["result"]["message_id"] if placeholder and placeholder.get("ok") else None
+
+    while worker.is_alive():
+        worker.join(timeout=4)
+        if worker.is_alive():
+            try:
+                tg("sendChatAction", chat_id=chat_id, action="typing")
+            except Exception:
+                pass
+
+    if "error" in result:
+        fallback = f"Chat request failed: {result['error']}"
+        if mid:
+            try:
+                tg("editMessageText", chat_id=chat_id, message_id=mid, text=fallback)
+                return
+            except Exception:
+                pass
+        send_text(chat_id, fallback)
+        return
+
+    answer, sources = result.get("answer", ""), result.get("sources", [])
     if not answer.strip():
         answer = "I could not produce an answer for that. Try rephrasing."
-    reply = answer.strip()
+    reply = _strip_markdown(answer.strip())
     if sources:
         uniq = []
         for s in sources:
             if s not in uniq:
                 uniq.append(s)
-        reply += "\n\nSources: " + ", ".join(uniq[:5])
+        reply += ("\n\n📄 Sources: " + " • ".join(uniq[:5]))
+
+    chunks = split_messages(reply)
+    if mid:
+        try:
+            tg("editMessageText", chat_id=chat_id, message_id=mid, text=chunks[0])
+            for c in chunks[1:]:
+                send_text(chat_id, c)
+            return
+        except Exception:
+            pass
     send_text(chat_id, reply)
+
+
+def _strip_markdown(text: str) -> str:
+    """Strip markdown / citation artifacts before sending to Telegram.
+
+    The model replies with **bold**, ### headers, `code`, | tables |, and
+    [1] [2] citation markers. Telegram only renders those when parse_mode is
+    set; we send plain text, so they must be removed or the user sees raw
+    stars, hashes, pipes and brackets."""
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)          # **bold** -> bold
+    text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", text)  # *em* -> em
+    text = re.sub(r"__([^_]+)__", r"\1", text)              # __bold__ -> bold
+    text = re.sub(r"`([^`]+)`", r"\1", text)                # `code` -> code
+    text = re.sub(r"\[([0-9]+)\]", "", text)                # [1] -> ""
+    text = re.sub(r"\[W[0-9]+\]", "", text)                 # [W1] -> ""
+    # Headings glued to preceding text ("…:### Files") -> split onto own line.
+    text = re.sub(r"(?<=\S)#{1,6}\s*", "\n", text)
+    text = re.sub(r"^\s*#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\|.*\|$", "", text, flags=re.MULTILINE)  # | table row ->
+    text = re.sub(r"^\s*\|[-:|\s]+\|$", "", text, flags=re.MULTILINE)  # |---|
+    text = re.sub(r"\s*\n?-{3,}\s*\n?", "\n", text)         # --- dividers
+    text = re.sub(r"^=+$", "", text, flags=re.MULTILINE)    # === dividers
+    text = re.sub(r"[ \t]{2,}", " ", text)                  # double spaces
+    text = re.sub(r"\s*\n{3,}\s*\n?", "\n\n", text)         # extra blank lines
+    return text.strip()
 
 
 def _sendable(s: dict) -> bool:
@@ -438,6 +586,8 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
     else:
         send_text(chat_id, "None of the matched sources could be sent: "
                   + "; ".join(failures) + ".")
+    if sent_ok:
+        LAST_SENT_FILE[chat_id] = sent_ok[-1]
     logging.warning("sent %d, failed %d of %d candidates",
                     len(sent_ok), len(failures), len(hits))
 
@@ -489,7 +639,22 @@ def _dispatch(chat_id: int, msg: dict, app: AppClient):
     photo = msg.get("photo")
     if photo:
         largest = photo[-1]
-        handle_upload(chat_id, largest.get("file_id"), "photo.jpg", "image/jpeg", app)
+        cap = (msg.get("caption") or "").strip()
+        if cap:
+            # Telegram sends no filename with compressed photos, so the caption
+            # is the only chance to name it meaningfully. Use it if it is short
+            # and file-ish; otherwise keep the caption as a human label.
+            if len(cap) <= 64 and re.fullmatch(r"[\w\- .+()\[\]]+\.?[a-z0-9]*", cap, re.I):
+                name = cap if "." in cap else cap + ".jpg"
+            elif len(cap) <= 64:
+                name = re.sub(r"[^\w\-]+", "_", cap).strip("_") + ".jpg"
+            else:
+                name = re.sub(r"[^\w\-]+", "_", cap)[:60].strip("_") + ".jpg"
+        else:
+            # Telegram stripped the original filename (compressed photo), so
+            # fall back to a timestamped label to keep uploads distinguishable.
+            name = "photo-" + time.strftime("%Y%m%d-%H%M%S") + ".jpg"
+        handle_upload(chat_id, largest.get("file_id"), name, "image/jpeg", app)
 
 
 def poll_once(app: AppClient, offset):
@@ -513,9 +678,24 @@ def poll_once(app: AppClient, offset):
             now = time.time()
             idle = now - _last_active.get(chat_id, 0)
             if idle > LOCK_MINUTES * 60:
+                blocked_until = _blocked_until.get(chat_id, 0)
+                if blocked_until and now < blocked_until:
+                    # Session is blocked: ignore everything until expiry.
+                    _pending[chat_id] = msg
+                    if not _prompted.get(chat_id):
+                        _prompted[chat_id] = True
+                        mins = max(1, int((blocked_until - now) // 60))
+                        send_text(
+                            chat_id,
+                            "Too many wrong passcodes. Your session is blocked for "
+                            f"about {mins} more minute{'s' if mins != 1 else ''}.",
+                        )
+                    continue
                 if text == PASSCODE:
                     _last_active[chat_id] = now
                     _prompted[chat_id] = False
+                    _failed[chat_id] = 0
+                    _blocked_until[chat_id] = 0
                     pending = _pending.pop(chat_id, None)
                     if pending is not None:
                         send_text(chat_id, "Unlocked. Answering your last request.")
@@ -524,13 +704,31 @@ def poll_once(app: AppClient, offset):
                         send_text(chat_id, "Unlocked.")
                 else:
                     _pending[chat_id] = msg
-                    if not _prompted.get(chat_id):
+                    _failed[chat_id] = _failed.get(chat_id, 0) + 1
+                    if _failed[chat_id] >= MAX_WRONG_PASSCODE:
+                        _blocked_until[chat_id] = now + BLOCK_MINUTES * 60
+                        _failed[chat_id] = 0
+                        _prompted[chat_id] = False
+                        send_text(
+                            chat_id,
+                            "Wrong passcode. Too many tries — your session is now "
+                            f"blocked for {BLOCK_MINUTES} minutes.",
+                        )
+                    elif not _prompted.get(chat_id):
                         _prompted[chat_id] = True
                         send_text(
                             chat_id,
                             "Session timed out after "
                             f"{LOCK_MINUTES} minute{'s' if LOCK_MINUTES != 1 else ''} of "
                             "inactivity. Send your passcode to unlock.",
+                        )
+                    else:
+                        left = MAX_WRONG_PASSCODE - _failed[chat_id]
+                        send_text(
+                            chat_id,
+                            f"Wrong passcode. {left} attempt{'s' if left != 1 else ''} "
+                            f"left before the session is blocked for {BLOCK_MINUTES} "
+                            "minutes.",
                         )
                 continue
         _last_active[chat_id] = time.time()
