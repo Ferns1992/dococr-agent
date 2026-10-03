@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 from urllib.parse import quote
@@ -257,6 +258,47 @@ SYSTEM_PROMPT_MEMORY_ONLY = (
     "information may be out of date.\n"
     "- Be concise. No preamble."
 )
+
+# Casual greetings and smalltalk: no retrieval, just a friendly reply. This
+# stops a plain "hi" from grounding on whatever fragment the vector search
+# happens to pull up (e.g. paperclip.git) and replying "can I help with
+# Paperclip?".
+SYSTEM_PROMPT_SMALLTALK = (
+    "You are a friendly assistant running inside a personal document library. "
+    "The user is just chatting — a greeting, a thanks, a bye, or a quick "
+    "pleasantry.\n\n"
+    "Rules:\n"
+    "- Reply naturally and briefly, matching the user's tone.\n"
+    "- Do not reference any document, data source, or search. This is pure chat.\n"
+    "- If the user is asking about your capabilities or who you are, answer "
+    "directly in one or two lines.\n"
+    "- If an earlier turn of this conversation is relevant (for example, they "
+    "just said thanks after you answered something), acknowledge it.\n"
+    "- No preamble, no bullet points."
+)
+
+
+_SMALLTALK = re.compile(
+    r"^(h(i|ey|ello|iya|owdy)[!.,]?|h[aei]llo|hy|hiii+|hey.?|yo+!?|"
+    r"good (morning|afternoon|evening|night)|sup|wassup|what'?s up|"
+    r"hiya|lo+|hola|hi there|hey there|hello there)$",
+    re.IGNORECASE,
+)
+
+
+def _is_smalltalk(text: str) -> bool:
+    t = text.strip().lower().rstrip(".!?")
+    if len(t) <= 4 and _SMALLTALK.match(t):
+        return True
+    if t in {"good morning", "good afternoon", "good evening", "good night",
+             "hi there", "hey there", "hello there", "hiya", "wassup", "sup",
+             "what's up", "whats up", "how are you", "how's it going",
+             "how are you doing", "what are you doing", "who are you",
+             "what can you do", "thank you", "thanks", "thanks a lot",
+             "thank you so much", "ty", "thx", "bye", "goodbye", "see you",
+             "good night", "goodnight", "ok", "okay", "hello", "hey", "hi"}:
+        return True
+    return False
 
 
 class ChatRequest(BaseModel):
@@ -729,6 +771,39 @@ async def chat(payload: ChatRequest, request: Request) -> StreamingResponse:
         history = _recent_turns(conversation["id"], user["id"])
         try:
             async with httpx.AsyncClient() as client:
+                if _is_smalltalk(question):
+                    # Greeting/smalltalk: answer conversationally, no retrieval.
+                    # Without this, "hi" grounds on whatever passage the vector
+                    # search happens to surface (e.g. paperclip.git) and replies
+                    # about a document the user never mentioned.
+                    yield _sse("sources", {"hits": [], "visual": False})
+                    yield _sse("mode", {"mode": "blend", "grounded": False, "web": 0})
+                    st: List[str] = []
+                    async for delta in nvidia_client.stream_chat(
+                        client,
+                        [
+                            {"role": "system", "content": SYSTEM_PROMPT_SMALLTALK},
+                            *history,
+                            {"role": "user", "content": question},
+                        ],
+                    ):
+                        st.append(delta)
+                        yield _sse("delta", {"text": delta})
+                    text_out = "".join(st).strip()
+                    if not text_out:
+                        text_out = "Hi!"
+                    db.add_message(conversation["id"], user["id"], "assistant", text_out, [])
+                    yield _sse(
+                        "done",
+                        {
+                            "elapsed": round(time.time() - started, 2),
+                            "conversation_id": conversation["id"],
+                            "mode": payload.mode,
+                            "grounded": False,
+                        },
+                    )
+                    return
+
                 if payload.visual:
                     vector = (await nvidia_client.embed_image_queries(client, [question]))[0]
                     hits = store.search_images(vector, top_k, payload.source_id, scope)
