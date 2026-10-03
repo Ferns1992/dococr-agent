@@ -321,6 +321,14 @@ def do_ask(chat_id: int, question: str, app: AppClient):
     send_text(chat_id, reply)
 
 
+def _sendable(s: dict) -> bool:
+    """A source can only be sent to Telegram if it has a stored file.
+
+    URL-origin ("paperclip.git") and other sources without a stored_path have
+    no bytes backing them, so /api/sources/{id}/file 404s. Skip those."""
+    return bool(s.get("stored_path")) or (s.get("origin") or "") != "url"
+
+
 def send_a_file(chat_id: int, query: str, app: AppClient):
     srcs = app.get("/api/sources")
     if srcs.status_code != 200:
@@ -328,9 +336,10 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
         return
     ql = query.lower()
     hits = [s for s in srcs.json().get("sources", [])
-            if ql in (s.get("filename") or s.get("source_name") or "").lower()
-            or ql in (s.get("source_name") or "").lower()
-            or ql == (s.get("source_id") or "").lower()]
+            if _sendable(s)
+            and (ql in (s.get("filename") or s.get("source_name") or "").lower()
+                 or ql in (s.get("source_name") or "").lower()
+                 or ql == (s.get("source_id") or "").lower())]
     if not hits:
         # token-overlap fallback: "a hold of this file openrag" -> OpenRAG
         skip = {
@@ -344,6 +353,8 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
         qtoks = [w for w in re.findall(r"[a-z0-9]+", ql) if len(w) >= 3 and w not in skip]
         scored = []
         for s in srcs.json().get("sources", []):
+            if not _sendable(s):
+                continue
             name = (s.get("filename") or s.get("source_name") or "").lower()
             if not qtoks:
                 continue
@@ -370,10 +381,10 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
                         if s is None:
                             s = next((x for x in srcs.json().get("sources", [])
                                       if (x.get("source_id") or x.get("id")) == sid), None)
-                        if s:
+                        if s and _sendable(s):
                             resolved.append((score, s))
                     if resolved:
-                        resolved.sort(key=lambda x: -x[0])
+                        resolved.sort(key=lambda x: -(x[0] or 0.0))
                         hits = [s for _, s in resolved[:3]]
         except Exception as exc:
             logging.warning("content search failed: %s", exc)
@@ -388,26 +399,37 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
         else:
             send_text(chat_id, f"No source matches '{query}'. Try /sources to see names.")
         return
-    s = hits[0]
-    sid = s.get("source_id") or s.get("id")
     if len(hits) > 1:
-        send_text(chat_id, f"Matched {len(hits)} sources; sending the first: {s.get('source_name')}")
-    tg("sendChatAction", chat_id=chat_id, action="upload_document")
-    try:
-        r = app.get(f"/api/sources/{sid}/file")
-        if r.status_code != 200:
-            send_text(chat_id, f"Could not fetch '{s.get('source_name')}' ({r.status_code}).")
-            return
-        files = {"document": (s.get("filename") or s.get("source_name") or "file",
-                              r.content, s.get("mime") or "application/octet-stream")}
-        resp = tg("sendDocument", chat_id=chat_id, files=files)
-        if resp.get("ok"):
-            logging.info("sent %s to chat %s", s.get("source_name"), chat_id)
-        else:
-            send_text(chat_id, "Telegram rejected the send: " + str(resp.get("description", "unknown error")))
-    except Exception as exc:
-        send_text(chat_id, f"Could not send the file: {exc}")
-        logging.exception("sendDocument failed")
+        send_text(chat_id, f"Matched {len(hits)} sources; sending the first that works.")
+    failures = []
+    for s in hits:
+        sid = s.get("source_id") or s.get("id")
+        name = s.get("source_name") or s.get("filename") or "?"
+        tg("sendChatAction", chat_id=chat_id, action="upload_document")
+        try:
+            r = app.get(f"/api/sources/{sid}/file")
+            if r.status_code != 200:
+                failures.append(f"{name} ({r.status_code})")
+                logging.warning("could not fetch %s: %s", name, r.status_code)
+                continue
+            files = {"document": (s.get("filename") or s.get("source_name") or "file",
+                                  r.content, s.get("mime") or "application/octet-stream")}
+            resp = tg("sendDocument", chat_id=chat_id, files=files)
+            if resp.get("ok"):
+                logging.info("sent %s to chat %s", name, chat_id)
+                if failures:
+                    send_text(chat_id,
+                              "Could not send these: " + ", ".join(failures) + ".")
+                return
+            failures.append(f"{name} (Telegram rejected: "
+                            + str(resp.get("description", "unknown error")) + ")")
+        except Exception as exc:
+            failures.append(f"{name} ({exc})")
+            logging.exception("sendDocument failed for %s", name)
+        time.sleep(0.5)
+    send_text(chat_id, "None of the matched sources could be sent: "
+              + "; ".join(failures) + ".")
+    logging.warning("all %d candidate file sends failed", len(hits))
 
 
 def handle_upload(chat_id: int, file_id: str, name: str, mime: str, app: AppClient):
