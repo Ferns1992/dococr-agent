@@ -185,6 +185,13 @@ def handle_command(chat_id: int, text: str, app: AppClient):
         lines = [f"- {s.get('source_name')} ({s.get('source_type')})" for s in src]
         send_text(chat_id, "Your documents:\n" + "\n".join(lines))
         return
+    if cmd == "/file":
+        q = text[len("/file"):].split("@", 1)[0].strip()
+        if not q:
+            send_text(chat_id, "Usage: /file <name or part> - sends that document to you.")
+            return
+        send_a_file(chat_id, q, app)
+        return
     if cmd == "/ask":
         q = text[len("/ask"):].split("@", 1)[0].strip()
         if not q:
@@ -209,6 +216,41 @@ def do_ask(chat_id: int, question: str, app: AppClient):
                 uniq.append(s)
         reply += "\n\nSources: " + ", ".join(uniq[:5])
     send_text(chat_id, reply)
+
+
+def send_a_file(chat_id: int, query: str, app: AppClient):
+    srcs = app.get("/api/sources")
+    if srcs.status_code != 200:
+        send_text(chat_id, "Could not list sources.")
+        return
+    ql = query.lower()
+    hits = [s for s in srcs.json().get("sources", [])
+            if ql in (s.get("filename") or s.get("source_name") or "").lower()
+            or ql in (s.get("source_name") or "").lower()
+            or ql == (s.get("source_id") or "").lower()]
+    if not hits:
+        send_text(chat_id, f"No source matches '{query}'. Try /sources to see names.")
+        return
+    s = hits[0]
+    sid = s.get("source_id") or s.get("id")
+    if len(hits) > 1:
+        send_text(chat_id, f"Matched {len(hits)} sources; sending the first: {s.get('source_name')}")
+    tg("sendChatAction", chat_id=chat_id, action="upload_document")
+    try:
+        r = app.get(f"/api/sources/{sid}/file")
+        if r.status_code != 200:
+            send_text(chat_id, f"Could not fetch '{s.get('source_name')}' ({r.status_code}).")
+            return
+        files = {"document": (s.get("filename") or s.get("source_name") or "file",
+                              r.content, s.get("mime") or "application/octet-stream")}
+        resp = tg("sendDocument", chat_id=chat_id, files=files)
+        if resp.get("ok"):
+            logging.info("sent %s to chat %s", s.get("source_name"), chat_id)
+        else:
+            send_text(chat_id, "Telegram rejected the send: " + str(resp.get("description", "unknown error")))
+    except Exception as exc:
+        send_text(chat_id, f"Could not send the file: {exc}")
+        logging.exception("sendDocument failed")
 
 
 def handle_upload(chat_id: int, file_id: str, name: str, mime: str, app: AppClient):
