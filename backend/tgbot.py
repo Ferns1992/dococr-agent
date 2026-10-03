@@ -364,11 +364,15 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
         if scored:
             scored.sort(key=lambda x: (-x[0], (x[1].get("source_name") or "").lower()))
             best_score = scored[0][0]
-            hits = [s for sc, s in scored if sc == best_score][:3]
+            hits = [s for sc, s in scored if sc == best_score]
+            if len(hits) == 1 and len(qtoks) >= 2:
+                # Only one file matches every word; include partial matches too
+                # so "openrag" still finds the diagram, the png, the doc, ...
+                hits = [s for sc, s in scored]
     if not hits and qtoks:
         # content fallback: ask the app which indexed text is most relevant
         try:
-            search = app.get("/api/search", params={"query": query, "top_k": 5})
+            search = app.get("/api/search", params={"query": query, "top_k": 20})
             if search.status_code == 200:
                 found = [(s.get("source_name"), s.get("source_id"), s.get("score"))
                          for s in search.json().get("sources", [])]
@@ -385,7 +389,7 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
                             resolved.append((score, s))
                     if resolved:
                         resolved.sort(key=lambda x: -(x[0] or 0.0))
-                        hits = [s for _, s in resolved[:3]]
+                        hits = [s for _, s in resolved[:8]]
         except Exception as exc:
             logging.warning("content search failed: %s", exc)
     if not hits:
@@ -400,7 +404,8 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
             send_text(chat_id, f"No source matches '{query}'. Try /sources to see names.")
         return
     if len(hits) > 1:
-        send_text(chat_id, f"Matched {len(hits)} sources; sending the first that works.")
+        send_text(chat_id, f"Matched {len(hits)} sources; sending all of them.")
+    sent_ok = []
     failures = []
     for s in hits:
         sid = s.get("source_id") or s.get("id")
@@ -409,27 +414,32 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
         try:
             r = app.get(f"/api/sources/{sid}/file")
             if r.status_code != 200:
-                failures.append(f"{name} ({r.status_code})")
+                failures.append(f"{name} (HTTP {r.status_code})")
                 logging.warning("could not fetch %s: %s", name, r.status_code)
                 continue
             files = {"document": (s.get("filename") or s.get("source_name") or "file",
                                   r.content, s.get("mime") or "application/octet-stream")}
             resp = tg("sendDocument", chat_id=chat_id, files=files)
             if resp.get("ok"):
+                sent_ok.append(name)
                 logging.info("sent %s to chat %s", name, chat_id)
-                if failures:
-                    send_text(chat_id,
-                              "Could not send these: " + ", ".join(failures) + ".")
-                return
-            failures.append(f"{name} (Telegram rejected: "
-                            + str(resp.get("description", "unknown error")) + ")")
+            else:
+                failures.append(f"{name} (Telegram rejected: "
+                                + str(resp.get("description", "unknown error")) + ")")
         except Exception as exc:
             failures.append(f"{name} ({exc})")
             logging.exception("sendDocument failed for %s", name)
         time.sleep(0.5)
-    send_text(chat_id, "None of the matched sources could be sent: "
-              + "; ".join(failures) + ".")
-    logging.warning("all %d candidate file sends failed", len(hits))
+    if sent_ok and failures:
+        send_text(chat_id, "Sent " + ", ".join(sent_ok) + ". Could not send: "
+                  + "; ".join(failures) + ".")
+    elif sent_ok:
+        send_text(chat_id, "Sent " + ", ".join(sent_ok) + ".")
+    else:
+        send_text(chat_id, "None of the matched sources could be sent: "
+                  + "; ".join(failures) + ".")
+    logging.warning("sent %d, failed %d of %d candidates",
+                    len(sent_ok), len(failures), len(hits))
 
 
 def handle_upload(chat_id: int, file_id: str, name: str, mime: str, app: AppClient):

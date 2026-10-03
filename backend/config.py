@@ -38,7 +38,8 @@ CLIP_BATCH = int(os.getenv("CLIP_BATCH", "8"))
 TOP_K = int(os.getenv("TOP_K", "6"))
 # How many prior turns to feed the model so follow-up questions keep context.
 # 0 disables chat memory; 6 keeps the last 6 user/assistant pairs.
-HISTORY_TURNS = int(os.getenv("HISTORY_TURNS", "6"))
+HISTORY_TURNS = int(os.getenv("HISTORY_TURNS", "20"))
+HISTORY_WINDOW_MINUTES = float(os.getenv("HISTORY_WINDOW_MINUTES", "60"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
 
 MAX_IMAGE_BYTES = 180 * 1024

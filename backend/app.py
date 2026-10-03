@@ -168,8 +168,12 @@ SYSTEM_PROMPT = (
     "Rules:\n"
     "- Answer only from the numbered context passages provided. They are the retrieved "
     "excerpts, not a conversation.\n"
-    "- If the passages do not contain the answer, say plainly that the documents do not "
-    "cover it. Do not guess or fill in from general knowledge.\n"
+    "- The earlier turns of this conversation are shown to you so you can follow it. For a "
+    "follow-up that refers back to something already said or asked, you may answer from "
+    "those earlier turns without a passage.\n"
+    "- If the passages do not contain the answer and it was not already said in this "
+    "conversation, say plainly that the documents do not cover it. Do not guess or fill in "
+    "from general knowledge.\n"
     + _GROUNDING_RULES
 )
 
@@ -182,14 +186,20 @@ SYSTEM_PROMPT_BLEND = (
     "Rules:\n"
     "- Use the numbered context passages first. They are the retrieved excerpts, not a "
     "conversation.\n"
+    "- The earlier turns of this conversation are shown to you so you can follow it. "
+    "When the user refers back to something already stated or asked here, use it: for "
+    "example, if they gave their name, favourite colour, or an earlier fact earlier in "
+    "this conversation, recalling it is correct and needs no passage. Losing pieces of "
+    "this conversation makes you seem amnesic.\n"
     "- If the passages only partly cover the question, answer that part from the passages "
     "and add the rest from your own knowledge.\n"
     "- If the passages do not cover the question at all, answer from your own knowledge.\n"
-    "- Mark any claim that does not come from a passage by ending that sentence with "
-    "(not in your documents). Omit that marker entirely for claims a passage supports, so "
-    "the two are always distinguishable.\n"
+    "- Mark any claim that does not come from a passage or an earlier turn of this "
+    "conversation by ending that sentence with (not in your documents). Omit that marker "
+    "entirely for claims a passage or an earlier turn supports, so the two are always "
+    "distinguishable.\n"
     "- Never present a personal detail, figure, or claim about the user as general "
-    "knowledge. Anything specific to this person must come from a passage.\n"
+    "knowledge unless the user stated it earlier in this conversation.\n"
     "- If you are unsure, say so rather than inventing detail.\n"
     + _GROUNDING_RULES
 )
@@ -199,6 +209,8 @@ SYSTEM_PROMPT_NO_CONTEXT = (
     "You are a helpful assistant. The user's document library returned nothing relevant to "
     "this question, so answer from your own general knowledge.\n\n"
     "Rules:\n"
+    "- The earlier turns of this conversation are shown to you so you can follow it. "
+    "When the user refers back to something already said or asked here, use it.\n"
     "- Start your reply with the single line: Not in your documents.\n"
     "- Then answer the question directly and usefully.\n"
     "- Be clear about the limits of what you know and do not invent specifics.\n"
@@ -911,10 +923,13 @@ def _recent_turns(conversation_id: str, user_id: int) -> List[dict]:
     except Exception:
         return []
     turns: List[dict] = []
+    window = config.HISTORY_WINDOW_MINUTES
+    cutoff = time.time() - window * 60 if window and window > 0 else 0.0
     for m in msgs[-config.HISTORY_TURNS * 2:]:
         role = m.get("role")
         text = (m.get("content") or "").strip()
-        if role in ("user", "assistant") and text:
+        created = m.get("created_at") or 0
+        if role in ("user", "assistant") and text and created >= cutoff:
             turns.append({"role": role, "content": text})
     # Never send the just-added current question back as history; it is the
     # live turn. The call site adds the current question afterwards.
