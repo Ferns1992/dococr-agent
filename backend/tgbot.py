@@ -234,10 +234,15 @@ def try_file_request(text: str) -> str:
         "return the ",
         "get me the ",
         "can you send",
-        "can i have",
-        "can I get",
+        "can i get ",
+        "can i have ",
+        "can i fetch ",
+        "could i get ",
         "i want the ",
         "i want ",
+        "id like ",
+        "i\'d like ",
+        "please send",
     )
     blob = " " + low + " "
     has_verb = any(p in low for p in prefixes) or any(
@@ -256,10 +261,16 @@ def try_file_request(text: str) -> str:
     rest = rest.strip(" \t\n:;.,!?\"'")
     if not rest:
         return ""
+    # if a token carries a real file extension, prefer everything up to and
+    # including that token: "Fabian Milton Fernandes Resume.pdf this" -> the PDF
+    mt = re.search(r"([^ ]+\.(?:png|jpg|jpeg|pdf|docx?|txt|md|html)(?:[^ ]*))$", rest, re.I)
+    if mt:
+        rest = rest[:mt.start(1)].strip() + " " + mt.group(1).split(" ")[-1].rstrip(".,;:!?\"'")
+        rest = rest.strip()
     # strip trailing filler like "file", "please", "for me", "the image"
     for chase in (" please", " the file", " the image", " the document",
                   " image", " the infographic", " infographic", " document",
-                  " for me", " from the library", " file"):
+                  " for me", " from the library", " file", " this", " that"):
         if rest.lower().endswith(chase):
             rest = rest[:-len(chase)].strip()
             if not rest:
