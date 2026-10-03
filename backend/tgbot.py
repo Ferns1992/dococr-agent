@@ -238,6 +238,14 @@ def try_file_request(text: str) -> str:
         "can i have ",
         "can i fetch ",
         "could i get ",
+        "can i see a preview of ",
+        "can i see the preview of ",
+        "can i see ",
+        "show a preview of ",
+        "show the preview of ",
+        "preview of ",
+        "the preview of ",
+        "preview ",
         "i want the ",
         "i want ",
         "id like ",
@@ -334,8 +342,39 @@ def send_a_file(chat_id: int, query: str, app: AppClient):
             scored.sort(key=lambda x: (-x[0], (x[1].get("source_name") or "").lower()))
             best_score = scored[0][0]
             hits = [s for sc, s in scored if sc == best_score][:3]
+    if not hits and qtoks:
+        # content fallback: ask the app which indexed text is most relevant
+        try:
+            search = app.get("/api/search", params={"query": query, "top_k": 5})
+            if search.status_code == 200:
+                found = [(s.get("source_name"), s.get("source_id"), s.get("score"))
+                         for s in search.json().get("sources", [])]
+                if found:
+                    by_name = {s.get("source_name"): s for s in srcs.json().get("sources", [])}
+                    by_name.update({s.get("filename"): s for s in srcs.json().get("sources", [])})
+                    resolved = []
+                    for name, sid, score in found:
+                        s = by_name.get(name)
+                        if s is None:
+                            s = next((x for x in srcs.json().get("sources", [])
+                                      if (x.get("source_id") or x.get("id")) == sid), None)
+                        if s:
+                            resolved.append((score, s))
+                    if resolved:
+                        resolved.sort(key=lambda x: -x[0])
+                        hits = [s for _, s in resolved[:3]]
+        except Exception as exc:
+            logging.warning("content search failed: %s", exc)
     if not hits:
-        send_text(chat_id, f"No source matches '{query}'. Try /sources to see names.")
+        if not qtoks:
+            names = [s.get("source_name") or s.get("filename") or "?"
+                     for s in srcs.json().get("sources", [])]
+            listing = "\n".join(f"- {n}" for n in names) or "(no files yet)"
+            send_text(chat_id,
+                      f"'{query}' is too vague for me to match a file. I can send one of:\n{listing}\n\n"
+                      f"e.g. \"send openrag\" or \"get the resume\". Try /sources too.")
+        else:
+            send_text(chat_id, f"No source matches '{query}'. Try /sources to see names.")
         return
     s = hits[0]
     sid = s.get("source_id") or s.get("id")

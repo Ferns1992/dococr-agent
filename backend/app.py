@@ -475,6 +475,41 @@ def sources(request: Request, owner: Optional[int] = None) -> dict:
     return {"sources": db.list_sources(user["id"], is_admin, owner_id=owner)}
 
 
+@app.get("/api/search")
+async def search_source(query: str, request: Request, top_k: int = 5) -> dict:
+    """Content search: embed a phrase and return the most relevant source names.
+
+    Used by the Telegram bot so a request like "the openwire file" can be
+    resolved to the source whose indexed text actually mentions OpenWire,
+    without paying for a full chat answer.
+    """
+    user = current_user(request)
+    scope = None if user["role"] == auth.ROLE_ADMIN else user["id"]
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(400, "Query is empty")
+    try:
+        async with httpx.AsyncClient() as client:
+            vector = (await nvidia_client.embed_texts(client, [q], "query"))[0]
+            hits = store.search_text(vector, top_k, None, scope)
+            image_hits = store.search_images(vector, top_k, None, scope)
+    except Exception as exc:
+        raise HTTPException(502, f"Search failed: {exc}")
+    best: dict = {}
+    for hit in hits + image_hits:
+        sid = hit.get("source_id")
+        name = hit.get("source_name")
+        score = float(hit.get("score") or 0.0)
+        if not sid:
+            continue
+        cur = best.get(sid)
+        if cur is None or score > cur["score"]:
+            best[sid] = {"source_id": sid, "source_name": name or sid,
+                         "score": score, "media_kind": hit.get("media_kind"),
+                         "page": hit.get("page")}
+    return {"sources": sorted(best.values(), key=lambda s: -s["score"])[:top_k]}
+
+
 @app.get("/api/sources/all")
 def all_sources(request: Request) -> dict:
     """Master admin view: every user's files in one place."""
